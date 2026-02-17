@@ -155,6 +155,10 @@ python update_knowledge_graph.py
 ## ⚠️ Disclaimer
 
 This software is for **educational and research purposes only**. It does not constitute financial advice. Trading stocks, especially small-caps, involves significant risk. The authors are not responsible for any financial losses incurred while using this software.
+
+## 📄 License
+
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE.md) file for details.
 ```
 
 <!--
