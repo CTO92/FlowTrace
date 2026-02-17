@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  dashboard:
+    # Development Mode: Enable Streamlit's runOnSave for hot-reloading.
+    # Since volumes are mounted, saving a file locally will trigger a refresh in the container.
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.runOnSave true
+    
+    # Explicitly ensure volume mounting is enabled for development
+    volumes:
+      - .:/app
+
+  listener:
+    # Add development-specific environment variables if needed
+    environment:
+      - DEBUG=true

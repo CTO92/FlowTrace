@@ -55,7 +55,11 @@ def main():
         ("plotly", "plotly"),
         ("python-dotenv", "dotenv"),
         ("langchain-openai", "langchain_openai"),
-        ("beautifulsoup4", "bs4")
+        ("beautifulsoup4", "bs4"),
+        ("pyvis", "pyvis"),
+        ("fpdf", "fpdf"),
+        ("streamlit-mic-recorder", "streamlit_mic_recorder"),
+        ("gTTS", "gtts")
     ]
 
     check_env_file()

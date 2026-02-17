@@ -37,6 +37,11 @@ Your task:
    - Sentiment (News/Social)
 4. Predict the expected % move for the small-cap stock over the next 1-5 days.
 
+WEIGHTING INSTRUCTIONS:
+- If event_type is 'Macro' (e.g., Rates, Inflation) or 'Regulatory', prioritize findings from the MacroAgent (rates, geopolitics).
+- If event_type is 'Earnings', 'Product Launch', or 'Scandal', prioritize findings from the SentimentAgent (social buzz, retail sentiment).
+- If event_type is 'Contract', 'Merger', or 'Partnership', prioritize the ResearchAgent (deal specifics) and Knowledge Graph connections.
+
 Output STRICT JSON format only. No markdown, no conversational text.
 Structure:
 {
@@ -131,3 +136,41 @@ async def analyze_impact(source_ticker, partners, news_item, agent_data=None, ma
     except Exception as e:
         logger.error(f"Error during Grok analysis: {e}")
         return None
+
+async def generate_briefing(signals):
+    """
+    Generates a morning briefing based on high-conviction signals.
+    signals: List of dictionaries containing signal data.
+    """
+    if not client:
+        return "Grok client not initialized."
+    
+    if not signals:
+        return "No significant market signals found for a briefing."
+    
+    # Prepare context
+    signals_text = ""
+    for s in signals[:10]: # Limit to top 10 to fit context/focus
+        signals_text += f"- {s['source_ticker']} -> {s['target_ticker']}: {s['summary']} (Conf: {s['confidence']}%)\n"
+    
+    prompt = f"""
+    You are a Portfolio Manager giving a morning briefing to your trading desk.
+    Summarize the following key market signals into a concise, actionable, audio-script style briefing.
+    Group them by themes (e.g., "Tech Supply Chain", "Macro Headwinds") if possible.
+    
+    SIGNALS:
+    {signals_text}
+    """
+    
+    try:
+        response = await client.chat.completions.create(
+            model="grok-beta",
+            messages=[
+                {"role": "system", "content": "You are a senior financial reporter."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error generating briefing: {e}"

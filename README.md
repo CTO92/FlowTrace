@@ -1,14 +1,16 @@
-# FlowTrace: Supply Chain Event Monitor & Agentic Research Platform
+# FlowTrace: Autonomous Financial Intelligence Agent
 
-**FlowTrace** is a high-performance, local Python application designed to detect high-probability trading opportunities in small-cap stocks. It works by analyzing real-time news events from Fortune 500 "Hub" companies and identifying cascading impacts on their smaller "Partner" suppliers or vendors.
+**FlowTrace** is an advanced, local AI platform designed to act as an autonomous "Hedge Fund Analyst Swarm." It combines real-time event monitoring with deep agentic research to uncover trading opportunities, risks, and market intelligence.
 
-The system leverages **Grok (xAI)** for advanced reasoning, **LangGraph** for autonomous agentic research, and a local **Knowledge Graph** to map supply chain dependencies.
+The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent orchestration, and is evolving to integrate **OpenClaw** capabilities for robust, stealthy web intelligence.
 
 ---
 
 ## ⚡ Key Features
 
+-   **Multi-Agent Swarm**: Specialized agents for Macro, Technical, Fundamental, and Sentiment analysis.
 - **Real-Time Ingestion**: Listens to institutional-grade news feeds via Polygon.io WebSockets.
+- **OpenClaw Integration**: "Scout" agent uses stealth browser technology to scrape alternative data (Web Traffic, App Ranks, Job Trends).
 - **Knowledge Graph**: Maps Fortune 500 companies to small-cap suppliers using Finnhub data and SEC filings.
 - **Agentic Research Layer**: Spins up autonomous AI agents (LangGraph + Playwright) to search the web and scrape data when context is missing.
 - **Grok Analysis**: Uses xAI's Grok model to calculate a "Unified Correlation Score" based on price, fundamentals, and sentiment.
@@ -24,7 +26,7 @@ The system is composed of five main layers:
 
 1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news for keywords (e.g., "contract", "partnership"), and queries the graph.
 2.  **Knowledge Graph** (`knowledge_graph.db`): SQLite database storing company nodes and relationship edges.
-3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to Research Agents to fetch missing details (e.g., "Find the latest contract value for Company X").
+3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to a swarm of specialized agents (Macro, Sentiment, Research, Scout, Strategy) to build a comprehensive thesis.
 4.  **Analysis Layer** (`grok_analysis.py`): Sends aggregated context (News + Graph + Agent Findings) to Grok for a structured prediction.
 5.  **UI Layer** (`app.py`): Streamlit dashboard for visualization and control.
 
@@ -51,6 +53,7 @@ The system is composed of five main layers:
 2.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
+    pip install pyvis
     ```
 
 3.  **Install Browser Binaries** (for Agent scraping):
@@ -131,6 +134,12 @@ Download and parse the latest 10-Q filings to find new supplier relationships us
 python update_knowledge_graph.py
 ```
 
+### Export Graph for Visualization
+Export the nodes and edges to CSV files compatible with Gephi for network analysis.
+```bash
+python export_graph.py
+```
+
 ---
 
 ## 📂 Project Structure
@@ -141,7 +150,10 @@ python update_knowledge_graph.py
 | `app.py` | Streamlit dashboard source code. |
 | `agent_workflow.py` | LangGraph definition for the Agentic Research Layer. |
 | `agent_tools.py` | Tools for agents (Web Search, Scraper). |
+| `agent_tools_scout.py` | **New**: Alternative data tools using OpenClaw stealth tech. |
+| `openclaw_wrapper.py` | **New**: Stealth browser session manager. |
 | `grok_analysis.py` | Interface for xAI API interaction. |
+| `FINANCE_AGENT_BRAINSTORM.md` | Roadmap for OpenClaw integration and advanced capabilities. |
 | `build_knowledge_graph.py` | Scripts to seed SQLite DB from Finnhub. |
 | `update_knowledge_graph.py` | Scripts to update DB from SEC EDGAR filings. |
 | `backtest.py` | Historical simulation and validation script. |

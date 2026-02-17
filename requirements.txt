@@ -26,3 +26,6 @@ plotly
 python-dotenv
 langchain-openai
 beautifulsoup4
+fpdf
+streamlit-mic-recorder
+gTTS
