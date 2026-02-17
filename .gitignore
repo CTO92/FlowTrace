@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Database & Local Storage
+*.db
+*.sqlite3
+chroma_db/
+
+# Project Specific Data
+sec_filings/
+sec-edgar-filings/
+backtest_results.csv
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

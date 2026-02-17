@@ -1,0 +1,163 @@
+# FlowTrace: Supply Chain Event Monitor & Agentic Research Platform
+
+**FlowTrace** is a high-performance, local Python application designed to detect high-probability trading opportunities in small-cap stocks. It works by analyzing real-time news events from Fortune 500 "Hub" companies and identifying cascading impacts on their smaller "Partner" suppliers or vendors.
+
+The system leverages **Grok (xAI)** for advanced reasoning, **LangGraph** for autonomous agentic research, and a local **Knowledge Graph** to map supply chain dependencies.
+
+---
+
+## ⚡ Key Features
+
+- **Real-Time Ingestion**: Listens to institutional-grade news feeds via Polygon.io WebSockets.
+- **Knowledge Graph**: Maps Fortune 500 companies to small-cap suppliers using Finnhub data and SEC filings.
+- **Agentic Research Layer**: Spins up autonomous AI agents (LangGraph + Playwright) to search the web and scrape data when context is missing.
+- **Grok Analysis**: Uses xAI's Grok model to calculate a "Unified Correlation Score" based on price, fundamentals, and sentiment.
+- **Interactive Dashboard**: A Streamlit UI for live monitoring, signal history, and manual agent triggers.
+- **Backtesting**: Historical replay module to validate strategies against past events.
+- **Desktop Alerts**: Native notifications for high-confidence signals.
+
+---
+
+## 🏗️ Architecture
+
+The system is composed of five main layers:
+
+1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news for keywords (e.g., "contract", "partnership"), and queries the graph.
+2.  **Knowledge Graph** (`knowledge_graph.db`): SQLite database storing company nodes and relationship edges.
+3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to Research Agents to fetch missing details (e.g., "Find the latest contract value for Company X").
+4.  **Analysis Layer** (`grok_analysis.py`): Sends aggregated context (News + Graph + Agent Findings) to Grok for a structured prediction.
+5.  **UI Layer** (`app.py`): Streamlit dashboard for visualization and control.
+
+---
+
+## 🚀 Installation
+
+### Prerequisites
+
+- Python 3.10+
+- xAI API Key (for Grok)
+- Polygon.io API Key (for News/Market Data)
+- Finnhub API Key (for Supply Chain Data)
+- Serper API Key (Optional, for Agent Web Search)
+
+### Local Setup
+
+1.  **Clone the repository**:
+    ```bash
+    git clone <repository-url>
+    cd PortfolioResearch
+    ```
+
+2.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **Install Browser Binaries** (for Agent scraping):
+    ```bash
+    python -m playwright install chromium
+    ```
+
+4.  **Configure Environment**:
+    Create a `.env` file in the root directory (see `.env` template in code) and add your API keys:
+    ```ini
+    XAI_API_KEY=your_key_here
+    POLYGON_API_KEY=your_key_here
+    FINNHUB_API_KEY=your_key_here
+    SERPER_API_KEY=your_key_here
+    SEC_EMAIL=user@example.com
+    ```
+
+5.  **Verify Setup**:
+    Run the environment check script to ensure everything is ready.
+    ```bash
+    python check_env.py
+    ```
+
+---
+
+## 🛠️ Usage
+
+### Phase 1: Build the Knowledge Graph
+Initialize the database and seed it with supply chain data from Finnhub.
+```bash
+python build_knowledge_graph.py
+```
+*Note: This creates `knowledge_graph.db` locally.*
+
+### Phase 2: Start the Ingestion Listener
+Run the backend listener. This process monitors the news feed, triggers agents, performs analysis, and saves signals to the DB.
+```bash
+python ingestion_listener.py
+```
+*Keep this running in a separate terminal window.*
+
+### Phase 3: Launch the Dashboard
+Start the Streamlit interface to view live signals and interact with agents.
+```bash
+streamlit run app.py
+```
+Access the dashboard at `http://localhost:8501`.
+
+---
+
+## 🐳 Docker Deployment
+
+You can run the entire stack (Listener + Dashboard) using Docker Compose.
+
+1.  Ensure Docker Desktop is running.
+2.  Run the compose command:
+    ```bash
+    docker-compose up --build
+    ```
+3.  Access the dashboard at `http://localhost:8501`.
+
+*Note: Desktop notifications (Plyer) may not work inside the containerized environment.*
+
+---
+
+## 🧪 Backtesting & Maintenance
+
+### Run Backtest
+Validate the strategy using historical data (last 90 days).
+```bash
+python backtest.py
+```
+Results are saved to `backtest_results.csv`.
+
+### Update Graph via EDGAR
+Download and parse the latest 10-Q filings to find new supplier relationships using Grok.
+```bash
+python update_knowledge_graph.py
+```
+
+---
+
+## 📂 Project Structure
+
+| File | Description |
+|------|-------------|
+| `ingestion_listener.py` | Main entry point. Listens for news, triggers workflow. |
+| `app.py` | Streamlit dashboard source code. |
+| `agent_workflow.py` | LangGraph definition for the Agentic Research Layer. |
+| `agent_tools.py` | Tools for agents (Web Search, Scraper). |
+| `grok_analysis.py` | Interface for xAI API interaction. |
+| `build_knowledge_graph.py` | Scripts to seed SQLite DB from Finnhub. |
+| `update_knowledge_graph.py` | Scripts to update DB from SEC EDGAR filings. |
+| `backtest.py` | Historical simulation and validation script. |
+| `check_env.py` | Environment verification utility. |
+| `requirements.txt` | Python dependencies. |
+| `Dockerfile` | Container definition. |
+| `docker-compose.yml` | Multi-container orchestration. |
+
+---
+
+## ⚠️ Disclaimer
+
+This software is for **educational and research purposes only**. It does not constitute financial advice. Trading stocks, especially small-caps, involves significant risk. The authors are not responsible for any financial losses incurred while using this software.
+```
+
+<!--
+[PROMPT_SUGGESTION]Implement a 'Simulation Mode' in the dashboard to manually input a fake news headline and see how the system analyzes it.[/PROMPT_SUGGESTION]
+[PROMPT_SUGGESTION]Add a feature to export the Knowledge Graph to a Gephi-compatible format for visualization.[/PROMPT_SUGGESTION]
+-->

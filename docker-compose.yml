@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  listener:
+    build: .
+    container_name: flowtrace_listener
+    command: python ingestion_listener.py
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    restart: unless-stopped
+    # Note: Desktop notifications (Plyer) will not work from inside a headless container 
+    # without specific host configuration. They work best when running locally.
+
+  dashboard:
+    build: .
+    container_name: flowtrace_dashboard
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - listener
