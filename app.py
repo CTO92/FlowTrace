@@ -155,6 +155,16 @@ def get_ticker_sectors(tickers):
 
 # --- Sidebar ---
 st.sidebar.title("⚡ FlowTrace")
+
+# Load env for sidebar display
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path, override=True)
+mode = os.getenv("TRADING_MODE", "PAPER")
+if mode == "LIVE":
+    st.sidebar.warning("🔴 LIVE TRADING ACTIVE")
+else:
+    st.sidebar.success("🟢 PAPER TRADING ACTIVE")
+
 st.sidebar.markdown("---")
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 5, 60, 10)
 min_confidence = st.sidebar.slider("Min Confidence %", 0, 100, 70)
@@ -440,23 +450,82 @@ else:
 
     with tab5:
         st.subheader("Portfolio Overview")
+        
+        # --- Trade Execution ---
+        with st.expander("💸 Manual Trade Execution", expanded=False):
+            with st.form("trade_form"):
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    trade_ticker = st.text_input("Ticker", placeholder="AAPL").upper()
+                with c2:
+                    trade_action = st.selectbox("Action", ["BUY", "SELL"])
+                with c3:
+                    trade_qty = st.number_input("Quantity", min_value=1, step=1)
+                with c4:
+                    trade_price = st.number_input("Price ($)", min_value=0.01, step=0.01)
+                
+                submit_trade = st.form_submit_button("Execute Order")
+                
+                if submit_trade:
+                    if not trade_ticker:
+                        st.error("Please enter a ticker.")
+                    else:
+                        summary = portfolio_manager.get_portfolio_summary()
+                        cash = summary['cash']
+                        total_val = trade_qty * trade_price
+                        
+                        if trade_action == "BUY":
+                            if cash >= total_val:
+                                portfolio_manager.update_cash(-total_val)
+                                portfolio_manager.add_position(trade_ticker, trade_qty, trade_price)
+                                portfolio_manager.log_trade(trade_ticker, "BUY", trade_qty, trade_price)
+                                st.success(f"Executed BUY: {trade_qty} {trade_ticker} @ ${trade_price}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"Insufficient funds. Cash: ${cash:,.2f}, Cost: ${total_val:,.2f}")
+                        
+                        elif trade_action == "SELL":
+                            positions = summary['positions']
+                            pos = next((p for p in positions if p['ticker'] == trade_ticker), None)
+                            owned = pos['quantity'] if pos else 0
+                            
+                            if owned >= trade_qty:
+                                portfolio_manager.update_cash(total_val)
+                                portfolio_manager.add_position(trade_ticker, -trade_qty, trade_price)
+                                portfolio_manager.log_trade(trade_ticker, "SELL", trade_qty, trade_price)
+                                st.success(f"Executed SELL: {trade_qty} {trade_ticker} @ ${trade_price}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"Insufficient shares. Owned: {owned}, Selling: {trade_qty}")
+
         summary = portfolio_manager.get_portfolio_summary()
         
+        # Calculate Realized P&L
+        history = portfolio_manager.get_trade_history()
+        realized_pnl = 0.0
+        if history:
+            realized_pnl = sum(item['pnl'] for item in history if item.get('pnl') is not None)
+
         # Metrics
         total_value = summary['cash']
         positions_df = pd.DataFrame(summary['positions'])
+        invested_value = 0.0
         
         if not positions_df.empty:
             # Calculate current value (using cost basis for now as we don't have live price feed in this view easily)
             positions_df['value'] = positions_df['quantity'] * positions_df['avg_price']
             invested_value = positions_df['value'].sum()
             total_value += invested_value
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Liquidation Value", f"${total_value:,.2f}")
-            c2.metric("Cash Balance", f"${summary['cash']:,.2f}")
-            c3.metric("Invested Capital", f"${invested_value:,.2f}")
-            
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Liquidation Value", f"${total_value:,.2f}")
+        c2.metric("Cash Balance", f"${summary['cash']:,.2f}")
+        c3.metric("Invested Capital", f"${invested_value:,.2f}")
+        c4.metric("Total Realized P&L", f"${realized_pnl:,.2f}")
+        
+        if not positions_df.empty:
             st.markdown("### Positions")
             st.dataframe(positions_df, use_container_width=True)
             
@@ -465,14 +534,43 @@ else:
                 fig = px.pie(positions_df, values='value', names='ticker', title='Portfolio Allocation')
                 st.plotly_chart(fig, use_container_width=True)
         else:
-            st.metric("Cash Balance", f"${summary['cash']:,.2f}")
             st.info("No active positions.")
             
         st.markdown("---")
-        st.subheader("Trade History")
-        history = portfolio_manager.get_trade_history()
+        st.subheader("Trade Journal & History")
         if history:
-            st.dataframe(pd.DataFrame(history), use_container_width=True)
+            df_history = pd.DataFrame(history)
+            
+            # Ensure notes column exists and handle NaNs
+            if 'notes' not in df_history.columns:
+                df_history['notes'] = ""
+            else:
+                df_history['notes'] = df_history['notes'].fillna("")
+
+            edited_df = st.data_editor(
+                df_history,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                    "timestamp": st.column_config.DatetimeColumn("Time", disabled=True, format="D MMM YYYY, h:mm a"),
+                    "ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
+                    "action": st.column_config.TextColumn("Action", disabled=True, width="small"),
+                    "quantity": st.column_config.NumberColumn("Qty", disabled=True, width="small"),
+                    "price": st.column_config.NumberColumn("Price", disabled=True, format="$%.2f", width="small"),
+                    "pnl": st.column_config.NumberColumn("Realized P&L", disabled=True, format="$%.2f", width="small"),
+                    "notes": st.column_config.TextColumn("Journal Notes", width="large")
+                },
+                column_order=["timestamp", "ticker", "action", "quantity", "price", "pnl", "notes"],
+                use_container_width=True,
+                hide_index=True,
+                key="journal_editor"
+            )
+
+            if st.session_state.get("journal_editor"):
+                edits = st.session_state["journal_editor"].get("edited_rows", {})
+                for idx, change in edits.items():
+                    if "notes" in change:
+                        trade_id = df_history.iloc[idx]['id']
+                        portfolio_manager.update_trade_note(trade_id, change['notes'])
         else:
             st.info("No trades executed yet.")
 
@@ -513,6 +611,11 @@ else:
             serp_key = st.text_input("Serper API Key", value=os.getenv("SERPER_API_KEY", ""), type="password")
             sec_email = st.text_input("SEC Email (User Agent)", value=os.getenv("SEC_EMAIL", ""))
             
+            st.markdown("### System Settings")
+            current_mode = os.getenv("TRADING_MODE", "PAPER")
+            mode_index = 1 if current_mode == "LIVE" else 0
+            trading_mode = st.radio("Trading Mode", ["Paper Trading", "Live Trading"], index=mode_index)
+            
             submitted = st.form_submit_button("Save Settings")
             
             if submitted:
@@ -526,7 +629,20 @@ else:
                 set_key(env_path, "SERPER_API_KEY", serp_key)
                 set_key(env_path, "SEC_EMAIL", sec_email)
                 
+                new_mode = "LIVE" if "Live" in trading_mode else "PAPER"
+                set_key(env_path, "TRADING_MODE", new_mode)
+                
                 st.success("Settings saved to .env!")
+                time.sleep(0.5)
+                st.rerun()
+        
+        st.markdown("---")
+        st.subheader("⚠️ Danger Zone")
+        if st.button("Reset Portfolio (Clear All Data)"):
+            portfolio_manager.reset_portfolio()
+            st.success("Portfolio reset to initial state ($100,000 cash, no positions).")
+            time.sleep(1)
+            st.rerun()
 
     with tab8:
         st.subheader("Portfolio Performance (Realized)")

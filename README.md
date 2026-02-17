@@ -1,5 +1,7 @@
 # FlowTrace: Autonomous Financial Intelligence Agent
 
+**THIS TOOL IS AN ALPHA VERSION MEANT TO PROVIDE A PLACE FOR DEVELOPERS TO WORK FROM IT IS NOT PRODUCTION-READY**
+
 **FlowTrace** is an advanced, local AI platform designed to act as an autonomous "Hedge Fund Analyst Swarm." It combines real-time event monitoring with deep agentic research to uncover trading opportunities, risks, and market intelligence.
 
 The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent orchestration, and is evolving to integrate **OpenClaw** capabilities for robust, stealthy web intelligence.
@@ -15,6 +17,10 @@ The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent
 - **Agentic Research Layer**: Spins up autonomous AI agents (LangGraph + Playwright) to search the web and scrape data when context is missing.
 - **Grok Analysis**: Uses xAI's Grok model to calculate a "Unified Correlation Score" based on price, fundamentals, and sentiment.
 - **Interactive Dashboard**: A Streamlit UI for live monitoring, signal history, and manual agent triggers.
+- **Portfolio Management**: Integrated paper trading system to track positions, performance, and equity curves.
+- **Risk Analysis**: Real-time calculation of Value at Risk (VaR), Sharpe Ratio, and holdings correlation matrices.
+- **Macro Dashboard**: Visualizes key economic indicators (Fed Rates, Yield Curve, CPI) and commodity prices.
+- **Analyst Chat**: Conversational interface to task the agent swarm with custom research requests.
 - **Backtesting**: Historical replay module to validate strategies against past events.
 - **Desktop Alerts**: Native notifications for high-confidence signals.
 
@@ -22,13 +28,14 @@ The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent
 
 ## 🏗️ Architecture
 
-The system is composed of five main layers:
+The system is composed of six main layers:
 
 1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news for keywords (e.g., "contract", "partnership"), and queries the graph.
 2.  **Knowledge Graph** (`knowledge_graph.db`): SQLite database storing company nodes and relationship edges.
 3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to a swarm of specialized agents (Macro, Sentiment, Research, Scout, Strategy) to build a comprehensive thesis.
 4.  **Analysis Layer** (`grok_analysis.py`): Sends aggregated context (News + Graph + Agent Findings) to Grok for a structured prediction.
-5.  **UI Layer** (`app.py`): Streamlit dashboard for visualization and control.
+5.  **Portfolio Layer** (`portfolio_manager.py`): Manages paper trading accounts, calculates risk metrics, and fetches macro data.
+6.  **UI Layer** (`app.py`): Streamlit dashboard for visualization and control.
 
 ---
 
@@ -96,7 +103,7 @@ python ingestion_listener.py
 *Keep this running in a separate terminal window.*
 
 ### Phase 3: Launch the Dashboard
-Start the Streamlit interface to view live signals and interact with agents.
+Start the Streamlit interface to view live signals, interact with agents, and manage the portfolio.
 ```bash
 streamlit run app.py
 ```

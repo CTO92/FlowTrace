@@ -39,7 +39,8 @@ def init_db():
             ticker TEXT,
             action TEXT,
             quantity INTEGER,
-            price REAL
+            price REAL,
+            notes TEXT
         )
     ''')
     
@@ -55,6 +56,12 @@ def init_db():
     
     # Ensure account row exists
     cursor.execute("INSERT OR IGNORE INTO account (id, cash_balance) VALUES (1, 100000.0)")
+    
+    # Migration for existing DBs to add notes column if missing
+    try:
+        cursor.execute("ALTER TABLE trade_history ADD COLUMN notes TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     conn.commit()
     conn.close()
@@ -153,16 +160,77 @@ def log_trade(ticker, action, quantity, price):
     conn.commit()
     conn.close()
 
+def update_trade_note(trade_id, note):
+    """Updates the note for a specific trade."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE trade_history SET notes = ? WHERE id = ?", (note, trade_id))
+    conn.commit()
+    conn.close()
+
 def get_trade_history():
-    """Returns the list of executed trades."""
+    """Returns the list of executed trades with realized P&L."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM trade_history ORDER BY timestamp DESC")
+    # Fetch oldest first to calculate cost basis correctly
+    cursor.execute("SELECT * FROM trade_history ORDER BY timestamp ASC")
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    return rows
+    
+    positions = {}
+    
+    for trade in rows:
+        ticker = trade['ticker']
+        action = trade['action']
+        qty = trade['quantity']
+        price = trade['price']
+        
+        trade['pnl'] = None
+        
+        if action == 'BUY':
+            if ticker not in positions:
+                positions[ticker] = {'qty': 0, 'avg_price': 0.0}
+            pos = positions[ticker]
+            
+            new_qty = pos['qty'] + qty
+            if new_qty > 0:
+                new_avg = ((pos['qty'] * pos['avg_price']) + (qty * price)) / new_qty
+                positions[ticker] = {'qty': new_qty, 'avg_price': new_avg}
+            
+        elif action == 'SELL':
+            if ticker in positions:
+                pos = positions[ticker]
+                avg_price = pos['avg_price']
+                pnl = (price - avg_price) * qty
+                trade['pnl'] = pnl
+                
+                new_qty = pos['qty'] - qty
+                if new_qty <= 0:
+                    del positions[ticker]
+                else:
+                    positions[ticker]['qty'] = new_qty
+            else:
+                trade['pnl'] = 0.0
+
+    # Return in reverse order (newest first)
+    return rows[::-1]
+
+def reset_portfolio():
+    """Resets the portfolio to initial state."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Reset Cash
+    cursor.execute("UPDATE account SET cash_balance = 100000.0 WHERE id=1")
+    cursor.execute("DELETE FROM positions")
+    cursor.execute("DELETE FROM trade_history")
+    
+    conn.commit()
+    conn.close()
 
 def get_equity_curve():
     """Reconstructs the equity curve based on trade history (Realized P&L)."""
