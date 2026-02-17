@@ -444,7 +444,7 @@ else:
                     graph_dot = generate_execution_graph(content)
                     if graph_dot:
                         st.markdown("#### 🧠 Reasoning Flow")
-                        st.graphviz_chart(graph_dot)
+                            st.code(graph_dot, language='DOT') # Use st.code with DOT language
                 else:
                     st.info("No agent data available for this signal.")
 

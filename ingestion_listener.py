@@ -24,9 +24,9 @@ EVENT_KEYWORDS = [
     "beat", "miss", "revenue", "strategic", "acquisition", "merger"
 ]
 
-def get_connected_small_caps(ticker):
+def get_related_assets(ticker):
     """
-    Query the knowledge graph for small-cap partners associated with the given F500 ticker.
+    Query the knowledge graph for related assets (Suppliers, Competitors, Peers).
     """
     if not os.path.exists(DB_PATH):
         return []
@@ -36,15 +36,20 @@ def get_connected_small_caps(ticker):
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        # Find targets where source is the ticker (Hub -> Partner)
+        # Find targets where source is the ticker (Hub -> Partner) OR Competitors
         query = """
             SELECT r.target_ticker, r.relationship_type, c.name
             FROM relationships r
             LEFT JOIN companies c ON r.target_ticker = c.ticker
             WHERE r.source_ticker = ?
+            UNION
+            SELECT r.source_ticker as target_ticker, r.relationship_type, c.name
+            FROM relationships r
+            LEFT JOIN companies c ON r.source_ticker = c.ticker
+            WHERE r.target_ticker = ? AND r.relationship_type IN ('Competitor', 'Peer')
         """
         
-        cursor.execute(query, (ticker,))
+        cursor.execute(query, (ticker, ticker))
         rows = cursor.fetchall()
         conn.close()
         
@@ -130,28 +135,29 @@ async def process_news_item(item):
     print(f"\n[!] NEWS ALERT: {title}")
     print(f"    Tickers: {tickers}")
 
-    # 2. Graph Lookup
-    found_impact = False
+    # 2. Graph Lookup & Impact Analysis
     for ticker in tickers:
-        partners = get_connected_small_caps(ticker)
-        if partners:
-            found_impact = True
-            print(f"    [+] IMPACT DETECTED for {ticker}. Connected Small-Caps:")
-            for p in partners:
+        related_assets = get_related_assets(ticker)
+        
+        # We analyze if there are related assets OR if it's a significant event for the ticker itself
+        if related_assets or any(kw in full_text for kw in ["earnings", "acquisition", "merger"]):
+            print(f"    [+] ANALYZING IMPACT for {ticker}. Related Assets: {len(related_assets)}")
+            for p in related_assets:
                 print(f"        -> {p['ticker']} ({p['relationship']}) - {p['name']}")
             
             # Trigger Agentic Research
             print(f"    [*] Launching Agentic Research for context...")
-            research_query = f"Investigate the relationship and recent news between {ticker} and {', '.join([p['ticker'] for p in partners])}."
+            related_tickers_str = ', '.join([p['ticker'] for p in related_assets[:5]]) # Limit to top 5 for query
+            research_query = f"Investigate the market impact of recent news for {ticker}. Check relationships with: {related_tickers_str}."
             agent_findings = await run_research_task(research_query)
 
             # Fetch Market Context (Price/Volume)
-            all_tickers = [ticker] + [p['ticker'] for p in partners]
+            all_tickers = [ticker] + [p['ticker'] for p in related_assets]
             market_data = fetch_market_snapshot(all_tickers)
             print(f"    [*] Fetched market data for {len(market_data)} tickers.")
 
-            print(f"    [*] Triggering Grok Analysis for {len(partners)} targets...")
-            analysis_result = await analyze_impact(ticker, partners, item, agent_findings, market_data)
+            print(f"    [*] Triggering Grok Analysis...")
+            analysis_result = await analyze_impact(ticker, related_assets, item, agent_findings, market_data)
             
             if analysis_result:
                 print("\n    [Grok Analysis Result]")
@@ -178,9 +184,6 @@ async def process_news_item(item):
 
                 # Save to DB for Dashboard
                 save_signals_to_db(ticker, analysis_result, agent_findings)
-    
-    if not found_impact:
-        print("    [-] No direct supply chain connections found in graph.")
 
 async def main():
     if not POLYGON_API_KEY:

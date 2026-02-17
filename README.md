@@ -6,6 +6,7 @@
 
 The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent orchestration, and is evolving to integrate **OpenClaw** capabilities for robust, stealthy web intelligence.
 
+
 ---
 
 ## ⚡ Key Features
@@ -13,10 +14,20 @@ The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent
 -   **Multi-Agent Swarm**: Specialized agents for Macro, Technical, Fundamental, and Sentiment analysis.
 - **Real-Time Ingestion**: Listens to institutional-grade news feeds via Polygon.io WebSockets.
 - **OpenClaw Integration**: "Scout" agent uses stealth browser technology to scrape alternative data (Web Traffic, App Ranks, Job Trends).
-- **Knowledge Graph**: Maps Fortune 500 companies to small-cap suppliers using Finnhub data and SEC filings.
+- **Knowledge Graph**: Maps market relationships (Supply Chain, Competitors, Sector Peers) across all market caps using Finnhub data and SEC Filings.
 - **Agentic Research Layer**: Spins up autonomous AI agents (LangGraph + Playwright) to search the web and scrape data when context is missing.
 - **Grok Analysis**: Uses xAI's Grok model to calculate a "Unified Correlation Score" based on price, fundamentals, and sentiment.
+-   **Peer Comparison**: Compares companies against their competitors on key metrics.
+-   **SEC Filing Analysis**: Searches and retrieves specific sections from SEC filings.
+-   **News Aggregation**: Fetches news from RSS feeds.
+-   **Short Interest Tracking**: Retrieves short interest data and days-to-cover metrics.
+-   **Earnings Analysis**: Retrieves upcoming earnings dates and estimates.
+-   **Seasonality Analysis**: Identifies seasonal patterns in stock returns.
+-   **Correlation Analysis**: Calculates rolling correlations between assets and benchmarks.
+-   **Volatility Analysis**: Gauges market fear through VIX term structure analysis.
+-   **Sector Rotation**: Analyzes sector ETF momentum to suggest allocations.
 - **Interactive Dashboard**: A Streamlit UI for live monitoring, signal history, and manual agent triggers.
+-   **Supply Chain Visualization**: Generates Graphviz DOT code to visualize supply chain relationships.
 - **Portfolio Management**: Integrated paper trading system to track positions, performance, and equity curves.
 - **Risk Analysis**: Real-time calculation of Value at Risk (VaR), Sharpe Ratio, and holdings correlation matrices.
 - **Macro Dashboard**: Visualizes key economic indicators (Fed Rates, Yield Curve, CPI) and commodity prices.
@@ -30,9 +41,9 @@ The system leverages **Grok (xAI)** for reasoning, **LangGraph** for multi-agent
 
 The system is composed of six main layers:
 
-1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news for keywords (e.g., "contract", "partnership"), and queries the graph.
+1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news for market-moving events, and queries the graph for related assets.
 2.  **Knowledge Graph** (`knowledge_graph.db`): SQLite database storing company nodes and relationship edges.
-3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to a swarm of specialized agents (Macro, Sentiment, Research, Scout, Strategy) to build a comprehensive thesis.
+3.  **Agentic Layer** (`agent_workflow.py`): A Supervisor Agent delegates tasks to a swarm of specialized agents to build a comprehensive thesis.
 4.  **Analysis Layer** (`grok_analysis.py`): Sends aggregated context (News + Graph + Agent Findings) to Grok for a structured prediction.
 5.  **Portfolio Layer** (`portfolio_manager.py`): Manages paper trading accounts, calculates risk metrics, and fetches macro data.
 6.  **UI Layer** (`app.py`): Streamlit dashboard for visualization and control.
@@ -160,7 +171,7 @@ python export_graph.py
 | `agent_tools_scout.py` | **New**: Alternative data tools using OpenClaw stealth tech. |
 | `openclaw_wrapper.py` | **New**: Stealth browser session manager. |
 | `grok_analysis.py` | Interface for xAI API interaction. |
-| `FINANCE_AGENT_BRAINSTORM.md` | Roadmap for OpenClaw integration and advanced capabilities. |
+| `agent_workflow.py` | Defines multi-agent workflows orchestrated by the Supervisor. |
 | `build_knowledge_graph.py` | Scripts to seed SQLite DB from Finnhub. |
 | `update_knowledge_graph.py` | Scripts to update DB from SEC EDGAR filings. |
 | `backtest.py` | Historical simulation and validation script. |
@@ -168,6 +179,8 @@ python export_graph.py
 | `requirements.txt` | Python dependencies. |
 | `Dockerfile` | Container definition. |
 | `docker-compose.yml` | Multi-container orchestration. |
+| `report_generator.py` | Generates PDF reports of signal data. |
+
 
 ---
 

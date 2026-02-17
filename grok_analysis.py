@@ -23,21 +23,24 @@ else:
     logger.warning("XAI_API_KEY not found. Grok analysis will be skipped.")
 
 SYSTEM_PROMPT = """
-You are a quantitative hedge fund analyst specializing in supply-chain event studies.
-Given news about a Fortune 500 company (Hub), analyze the impact on its connected small-cap partners (Spokes).
+You are a Chief Investment Officer (CIO) and quantitative analyst.
+Given news about a specific ticker (Source), analyze the impact on the ticker itself and its related assets (Competitors, Suppliers, Peers).
 
 Your task:
 1. Classify the event type (e.g., Contract, Earnings, Merger, Regulatory).
-2. Estimate the impact on the specific small-cap partners provided.
+2. Estimate the impact on:
+   - The Source Ticker (Direct Impact)
+   - Related Assets (Sympathetic or Second-Order Impact)
 3. Calculate a 'Unified Multi-Factor Correlation Strength' (0.0 to 1.0) based on:
    - Price Action (Beta, Cointegration)
    - Options Flow (IV, OI)
-   - Fundamentals (Revenue dependency)
+   - Fundamentals (Revenue dependency, Competitive advantage)
    - Macro/Sector tailwinds
    - Sentiment (News/Social)
-4. Predict the expected % move for the small-cap stock over the next 1-5 days.
+4. Predict the expected % move for the targets over the next 1-5 days.
 
 WEIGHTING INSTRUCTIONS:
+- If event_type is 'Earnings' for a Competitor, specifically analyze for "Sympathetic Moves" (e.g., if Competitor A beats, does Ticker B rise in sympathy or fall due to market share loss?).
 - If event_type is 'Macro' (e.g., Rates, Inflation) or 'Regulatory', prioritize findings from the MacroAgent (rates, geopolitics).
 - If event_type is 'Earnings', 'Product Launch', or 'Scandal', prioritize findings from the SentimentAgent (social buzz, retail sentiment).
 - If event_type is 'Contract', 'Merger', or 'Partnership', prioritize the ResearchAgent (deal specifics) and Knowledge Graph connections.
@@ -48,7 +51,7 @@ Structure:
   "analysis_summary": "Brief summary of the event and macro implication",
   "targets": [
     {
-      "ticker": "SMALL_CAP_TICKER",
+      "ticker": "TICKER",
       "event_type": "Contract/Earnings/etc",
       "expected_move_pct": 5.5,
       "confidence": 85,
@@ -60,9 +63,9 @@ Structure:
 }
 """
 
-async def analyze_impact(source_ticker, partners, news_item, agent_data=None, market_data=None):
+async def analyze_impact(source_ticker, related_assets, news_item, agent_data=None, market_data=None):
     """
-    Sends news and partner context to Grok for analysis.
+    Sends news and related asset context to Grok for analysis.
     """
     if not client:
         logger.error("Grok client not initialized. Check API Key.")
@@ -74,11 +77,11 @@ async def analyze_impact(source_ticker, partners, news_item, agent_data=None, ma
     published_utc = getattr(news_item, "published_utc", "Unknown Time")
 
     # Format partner context for the LLM
-    partners_context = []
-    for p in partners:
-        partners_context.append(f"- {p['ticker']} ({p['name']}): Relationship={p['relationship']}")
+    assets_context = []
+    for p in related_assets:
+        assets_context.append(f"- {p['ticker']} ({p['name']}): Relationship={p['relationship']}")
     
-    partners_str = "\n".join(partners_context)
+    assets_str = "\n".join(assets_context)
 
     market_section = ""
     if market_data:
@@ -100,18 +103,18 @@ async def analyze_impact(source_ticker, partners, news_item, agent_data=None, ma
     Description: {description}
     Time: {published_utc}
 
-    POTENTIAL AFFECTED PARTNERS:
-    {partners_str}
+    RELATED ASSETS (Competitors/Suppliers/Peers):
+    {assets_str}
 
     {market_section}
 
     {agent_section}
 
-    Analyze the impact of this news on the partners listed above.
+    Analyze the impact of this news on the source ticker and the related assets listed above.
     """
 
     try:
-        logger.info(f"Sending analysis request to Grok for {source_ticker} -> {len(partners)} partners...")
+        logger.info(f"Sending analysis request to Grok for {source_ticker}...")
         
         response = await client.chat.completions.create(
             model="grok-beta", # Adjust model name as needed (e.g., grok-2)

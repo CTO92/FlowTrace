@@ -104,6 +104,25 @@ def fetch_finnhub_supply_chain(symbol):
         print(f"[-] Exception fetching {symbol}: {e}")
         return None
 
+def fetch_finnhub_peers(symbol):
+    """
+    Fetch company peers (competitors) from Finnhub API.
+    """
+    if not FINNHUB_API_KEY:
+        return []
+
+    url = "https://finnhub.io/api/v1/stock/peers"
+    params = {'symbol': symbol, 'token': FINNHUB_API_KEY}
+    
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            # Returns a list of strings: ["AAPL", "DELL", "HPQ", ...]
+            return response.json()
+    except Exception as e:
+        print(f"[-] Exception fetching peers for {symbol}: {e}")
+    return []
+
 def setup_vector_db():
     """Initialize ChromaDB and Sentence Transformer model."""
     print(f"[*] Initializing Vector Database at {CHROMA_PATH}...")
@@ -176,6 +195,37 @@ def seed_database():
                 metadatas=[{"source": hub_ticker, "target": supp_ticker, "type": "Supplier"}],
                 ids=[f"{hub_ticker}_{supp_ticker}"]
             )
+
+        # 3. Fetch Competitors/Peers
+        peers = fetch_finnhub_peers(hub_ticker)
+        if peers:
+            print(f"    > Found {len(peers)} peers for {hub_ticker}")
+            for peer_ticker in peers:
+                if peer_ticker == hub_ticker: continue
+                
+                # Insert Peer into Companies
+                cursor.execute('''
+                    INSERT OR IGNORE INTO companies (ticker, last_updated) 
+                    VALUES (?, ?)
+                ''', (peer_ticker, datetime.now()))
+
+                # Insert Relationship (Hub <-> Peer) as "Competitor"
+                cursor.execute('''
+                    INSERT OR REPLACE INTO relationships 
+                    (source_ticker, target_ticker, relationship_type, confidence, source_origin, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (hub_ticker, peer_ticker, "Competitor", 0.85, "Finnhub", datetime.now()))
+                count_rels += 1
+
+                # Vector Embedding
+                desc = f"{hub_ticker} is a competitor of {peer_ticker}. Relationship: Competitor."
+                embedding = embedding_model.encode(desc).tolist()
+                vector_collection.add(
+                    documents=[desc],
+                    embeddings=[embedding],
+                    metadatas=[{"source": hub_ticker, "target": peer_ticker, "type": "Competitor"}],
+                    ids=[f"{hub_ticker}_{peer_ticker}_comp"]
+                )
 
         conn.commit()
         # Respect API rate limits (Finnhub free is 60/min, premium is higher but good practice)
