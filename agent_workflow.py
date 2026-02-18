@@ -1,12 +1,14 @@
 import os
 import json
 import time
+import asyncio
 import operator
 from typing import Annotated, Sequence, TypedDict, List, Union
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, FunctionMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import chain
 from langgraph.graph import StateGraph, END
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from dotenv import load_dotenv
@@ -20,6 +22,7 @@ load_dotenv()
 
 # --- Configuration ---
 XAI_API_KEY = os.getenv("XAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") #For prompt optimization (GPT-4 etc)
 PERFORMANCE_LOG_FILE = os.path.join(os.path.dirname(__file__), "agent_performance.log")
 
 # Initialize Grok (xAI) as the LLM
@@ -41,6 +44,7 @@ def create_agent(tools, system_prompt):
     """Generic helper to create an agent with specific tools and persona."""
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
+        MessagesPlaceholder(variable_name="messages"),
  ("user", "Please adhere to the system prompt and respond in a JSON format."),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
@@ -66,6 +70,10 @@ async def log_agent_performance(agent_name, start_time, success, error=None):
         f.write(json.dumps(log_entry) + "\n")
 
 async def research_node(state):
+    """General Web Research Agent."""
+    system_prompt = "You are a Research Agent. You can search the web, scrape pages, look up competitors, and check analyst ratings to find missing financial data, supplier relationships, or news details."
+    agent = create_agent([web_search, scrape_web_page, get_competitors, get_analyst_ratings], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -75,13 +83,11 @@ async def research_node(state):
         await log_agent_performance("ResearchAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"ResearchAgent failed with error: {e}", name="ResearchAgent")]}
 
-    """General Web Research Agent."""
-    system_prompt = "You are a Research Agent. You can search the web, scrape pages, look up competitors, and check analyst ratings to find missing financial data, supplier relationships, or news details."
-    agent = create_agent([web_search, scrape_web_page, get_competitors, get_analyst_ratings], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="ResearchAgent")]}
-
 async def macro_node(state):
+    """Macro-Economic Agent using FRED and web search."""
+    system_prompt = "You are a Macro Strategy Agent. You have a tool to fetch current interest rates from FRED. Focus on interest rates, inflation, central bank policy, and geopolitical events. Use your tools to answer questions."
+    agent = create_agent([web_search, get_macro_rates], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -90,14 +96,12 @@ async def macro_node(state):
     except Exception as e:
         await log_agent_performance("MacroAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"MacroAgent failed with error: {e}", name="MacroAgent")]}
-    """Macro-Economic Agent using FRED and web search."""
-    system_prompt = "You are a Macro Strategy Agent. You have a tool to fetch current interest rates from FRED. Focus on interest rates, inflation, central bank policy, and geopolitical events. Use your tools to answer questions."
-    agent = create_agent([web_search, get_macro_rates], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="MacroAgent")]}
-
 
 async def sentiment_node(state):
+    """Sentiment & Alternative Data Agent for Reddit and web scraping."""
+    system_prompt = "You are a Sentiment Analyst. You have a tool to scrape Reddit for ticker sentiment. You investigate social media buzz, consumer sentiment, and alternative data trends. You also check insider trading activity to gauge management confidence."
+    agent = create_agent([web_search, scrape_web_page, get_reddit_sentiment, get_insider_trades], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -106,14 +110,12 @@ async def sentiment_node(state):
     except Exception as e:
         await log_agent_performance("SentimentAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"SentimentAgent failed with error: {e}", name="SentimentAgent")]}
-    """Sentiment & Alternative Data Agent for Reddit and web scraping."""
-    system_prompt = "You are a Sentiment Analyst. You have a tool to scrape Reddit for ticker sentiment. You investigate social media buzz, consumer sentiment, and alternative data trends. You also check insider trading activity to gauge management confidence."
-    agent = create_agent([web_search, scrape_web_page, get_reddit_sentiment, get_insider_trades], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="SentimentAgent")]}
-
 
 async def risk_node(state):
+    """Risk Management Agent."""
+    system_prompt = "You are a Risk Manager. Your job is to check portfolio exposure and assess concentration risk. Use the get_portfolio_exposure tool to check current holdings before we commit to a trade."
+    agent = create_agent([get_portfolio_exposure], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -122,14 +124,12 @@ async def risk_node(state):
     except Exception as e:
         await log_agent_performance("RiskManagerAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"RiskManagerAgent failed with error: {e}", name="RiskManagerAgent")]}
-    """Risk Management Agent."""
-    system_prompt = "You are a Risk Manager. Your job is to check portfolio exposure and assess concentration risk. Use the get_portfolio_exposure tool to check current holdings before we commit to a trade."
-    agent = create_agent([get_portfolio_exposure], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="RiskManagerAgent")]}
-
 
 async def execution_node(state):
+    """Execution Agent."""
+    system_prompt = "You are an Execution Trader. Your job is to execute trades based on instructions. Use the execute_trade tool."
+    agent = create_agent([execute_trade], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -138,14 +138,12 @@ async def execution_node(state):
     except Exception as e:
         await log_agent_performance("ExecutionAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"ExecutionAgent failed with error: {e}", name="ExecutionAgent")]}
-    """Execution Agent."""
-    system_prompt = "You are an Execution Trader. Your job is to execute trades based on instructions. Use the execute_trade tool."
-    agent = create_agent([execute_trade], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="ExecutionAgent")]}
-
 
 async def strategy_node(state):
+    """Strategy Agent."""
+    system_prompt = "You are a Derivatives Strategist. Your job is to propose complex option structures (spreads, condors, etc.) that match the analysis outlook. You can also calculate the Greeks for specific options using calculate_option_greeks to assess risk. You can also calculate optimal entry prices based on technical support and suggest stop-loss levels using ATR."
+    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -154,14 +152,12 @@ async def strategy_node(state):
     except Exception as e:
         await log_agent_performance("StrategyAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"StrategyAgent failed with error: {e}", name="StrategyAgent")]}
-    """Strategy Agent."""
-    system_prompt = "You are a Derivatives Strategist. Your job is to propose complex option structures (spreads, condors, etc.) that match the analysis outlook. You can also calculate the Greeks for specific options using calculate_option_greeks to assess risk. You can also calculate optimal entry prices based on technical support and suggest stop-loss levels using ATR."
-    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="StrategyAgent")]}
-
 
 async def scout_node(state):
+    """Scout Agent using OpenClaw tools."""
+    system_prompt = "You are an Alternative Data Scout. You use OpenClaw stealth technology to scrape web traffic, app rankings, job trends, and Google Trends."
+    agent = create_agent([get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -170,14 +166,12 @@ async def scout_node(state):
     except Exception as e:
         await log_agent_performance("ScoutAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"ScoutAgent failed with error: {e}", name="ScoutAgent")]}
-    """Scout Agent using OpenClaw tools."""
-    system_prompt = "You are an Alternative Data Scout. You use OpenClaw stealth technology to scrape web traffic, app rankings, job trends, and Google Trends."
-    agent = create_agent([get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="ScoutAgent")]}
-
 
 async def technical_node(state):
+    """Technical Agent using Vision."""
+    system_prompt = "You are a Technical Analyst. You use a vision model to look at charts and identify patterns. Use the analyze_chart_pattern tool."
+    agent = create_agent([analyze_chart_pattern], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -186,14 +180,12 @@ async def technical_node(state):
     except Exception as e:
         await log_agent_performance("TechnicalAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"TechnicalAgent failed with error: {e}", name="TechnicalAgent")]}
-    """Technical Agent using Vision."""
-    system_prompt = "You are a Technical Analyst. You use a vision model to look at charts and identify patterns. Use the analyze_chart_pattern tool."
-    agent = create_agent([analyze_chart_pattern], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="TechnicalAgent")]}
-
 
 async def validation_node(state):
+    """Validation Agent."""
+    system_prompt = "You are a Validation Agent. Your job is to backtest the specific signal type found to ensure it has a positive historical expectancy before we risk capital. Use the validate_signal_robustness tool."
+    agent = create_agent([validate_signal_robustness], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -202,14 +194,12 @@ async def validation_node(state):
     except Exception as e:
         await log_agent_performance("ValidationAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"ValidationAgent failed with error: {e}", name="ValidationAgent")]}
-    """Validation Agent."""
-    system_prompt = "You are a Validation Agent. Your job is to backtest the specific signal type found to ensure it has a positive historical expectancy before we risk capital. Use the validate_signal_robustness tool."
-    agent = create_agent([validate_signal_robustness], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="ValidationAgent")]}
-
 
 async def news_sentiment_node(state):
+    """News Sentiment Agent using local BERT."""
+    system_prompt = "You are a News Sentiment Specialist. You use a local FinBERT model to score headlines and news snippets. Use the analyze_sentiment_bert tool."
+    agent = create_agent([analyze_sentiment_bert], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -218,14 +208,12 @@ async def news_sentiment_node(state):
     except Exception as e:
         await log_agent_performance("NewsSentimentAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"NewsSentimentAgent failed with error: {e}", name="NewsSentimentAgent")]}
-    """News Sentiment Agent using local BERT."""
-    system_prompt = "You are a News Sentiment Specialist. You use a local FinBERT model to score headlines and news snippets. Use the analyze_sentiment_bert tool."
-    agent = create_agent([analyze_sentiment_bert], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="NewsSentimentAgent")]}
-
 
 async def portfolio_optimizer_node(state):
+    """Portfolio Optimizer Agent."""
+    system_prompt = "You are a Portfolio Optimizer. You use Mean-Variance Optimization to suggest rebalancing weights for the current portfolio to maximize risk-adjusted returns. Use the optimize_portfolio_mean_variance tool."
+    agent = create_agent([optimize_portfolio_mean_variance], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -234,14 +222,12 @@ async def portfolio_optimizer_node(state):
     except Exception as e:
         await log_agent_performance("PortfolioOptimizerAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"PortfolioOptimizerAgent failed with error: {e}", name="PortfolioOptimizerAgent")]}
-    """Portfolio Optimizer Agent."""
-    system_prompt = "You are a Portfolio Optimizer. You use Mean-Variance Optimization to suggest rebalancing weights for the current portfolio to maximize risk-adjusted returns. Use the optimize_portfolio_mean_variance tool."
-    agent = create_agent([optimize_portfolio_mean_variance], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="PortfolioOptimizerAgent")]}
-
 
 async def sector_rotation_node(state):
+    """Sector Rotation Agent."""
+    system_prompt = "You are a Sector Rotation Strategist. You analyze relative strength between sectors (e.g., Tech vs Energy) to suggest overweight/underweight allocations. Use the analyze_sector_momentum tool."
+    agent = create_agent([analyze_sector_momentum], system_prompt)
+    
     start_time = time.time()
     try:
         result = await agent.ainvoke({"messages": state["messages"]})
@@ -250,11 +236,6 @@ async def sector_rotation_node(state):
     except Exception as e:
         await log_agent_performance("SectorRotationAgent", start_time, False, str(e))
         return {"messages": [AIMessage(content=f"SectorRotationAgent failed with error: {e}", name="SectorRotationAgent")]}
-    """Sector Rotation Agent."""
-    system_prompt = "You are a Sector Rotation Strategist. You analyze relative strength between sectors (e.g., Tech vs Energy) to suggest overweight/underweight allocations. Use the analyze_sector_momentum tool."
-    agent = create_agent([analyze_sector_momentum], system_prompt)
-    result = await agent.ainvoke({"messages": state["messages"]})
-    return {"messages": [AIMessage(content=result["output"], name="SectorRotationAgent")]}
 
 async def volatility_node(state):
     """Volatility Agent."""
@@ -394,9 +375,49 @@ async def supervisor_node(state):
             "next": decision.get("next", "FINISH"),
             "messages": [AIMessage(content=response.content)]
         }
+
     except Exception:
         # Fallback if JSON parsing fails
         return {"next": "FINISH", "messages": [AIMessage(content=response.content)]}
+
+async def identify_agents_for_prompt_improvement():
+    """Identifies poorly performing agents for prompt improvement."""
+    if not os.path.exists(PERFORMANCE_LOG_FILE):
+        return {}
+        
+    agent_stats = {}
+    try:
+        with open(PERFORMANCE_LOG_FILE, 'r') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    name = entry['agent_name']
+                    if name not in agent_stats:
+                        agent_stats[name] = {'success': 0, 'fail': 0, 'total_time': 0, 'count': 0}
+                    
+                    if entry['success']:
+                        agent_stats[name]['success'] += 1
+                    else:
+                        agent_stats[name]['fail'] += 1
+                    
+                    agent_stats[name]['total_time'] += entry['duration']
+                    agent_stats[name]['count'] += 1
+                except:
+                    continue
+    except Exception:
+        return {}
+    
+    suggestions = {}
+    for name, stats in agent_stats.items():
+        fail_rate = stats['fail'] / stats['count'] if stats['count'] > 0 else 0
+        avg_time = stats['total_time'] / stats['count'] if stats['count'] > 0 else 0
+        
+        if fail_rate > 0.2:
+            suggestions[name] = f"High failure rate ({fail_rate:.1%}). Consider reviewing tool inputs or error handling."
+        if avg_time > 30:
+            suggestions[name] = suggestions.get(name, "") + f" Slow execution ({avg_time:.1f}s). Check tool latency."
+            
+    return suggestions
 
 # --- Graph Construction ---
 workflow = StateGraph(AgentState)

@@ -16,6 +16,7 @@ from streamlit_mic_recorder import speech_to_text
 from gtts import gTTS
 import io
 from polygon import RESTClient
+from agent_workflow import identify_agents_for_prompt_improvement
 
 # --- Configuration ---
 st.set_page_config(
@@ -444,7 +445,7 @@ else:
                     graph_dot = generate_execution_graph(content)
                     if graph_dot:
                         st.markdown("#### 🧠 Reasoning Flow")
-                            st.code(graph_dot, language='DOT') # Use st.code with DOT language
+                        st.code(graph_dot, language='DOT') # Use st.code with DOT language
                 else:
                     st.info("No agent data available for this signal.")
 
@@ -635,6 +636,19 @@ else:
                 st.success("Settings saved to .env!")
                 time.sleep(0.5)
                 st.rerun()
+
+            st.markdown("---")
+            st.markdown("### Prompt Optimization")
+            if st.button("Suggest Prompt Improvements"):
+                with st.spinner("Analyzing agent performance..."):
+                    # Call the function to get prompt improvement suggestions
+                    suggested_improvements = asyncio.run(identify_agents_for_prompt_improvement())
+
+                    if suggested_improvements:
+                        st.write("Suggested Prompt Improvements:")
+                        st.json(suggested_improvements)
+                    else:
+                        st.info("No improvements suggested (or no performance data yet).")
         
         st.markdown("---")
         st.subheader("⚠️ Danger Zone")
