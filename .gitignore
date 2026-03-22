@@ -31,3 +31,6 @@ backtest_results.csv
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Claude Code
+.claude/
