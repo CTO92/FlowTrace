@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import datetime
 import operator
 from typing import Annotated, Sequence, TypedDict, List, Union
 
@@ -17,21 +18,17 @@ from agent_tools import web_search, scrape_web_page, get_competitors, get_inside
 from agent_tools_advanced import get_macro_rates, get_reddit_sentiment, get_portfolio_exposure, execute_trade, propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, validate_signal_robustness, calculate_atr_stop_loss, analyze_sentiment_bert, optimize_portfolio_mean_variance, analyze_sector_momentum, analyze_vix_term_structure, calculate_rolling_correlation, analyze_seasonality
 from agent_tools_scout import get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends
 from agent_tools_technical import analyze_chart_pattern
+from node_identity import generate_agent_id, compute_persona_hash, get_node_id
+from llm_config import get_langchain_llm
 
 load_dotenv()
 
 # --- Configuration ---
-XAI_API_KEY = os.getenv("XAI_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") #For prompt optimization (GPT-4 etc)
 PERFORMANCE_LOG_FILE = os.path.join(os.path.dirname(__file__), "agent_performance.log")
 
-# Initialize Grok (xAI) as the LLM
-llm = ChatOpenAI(
-    api_key=XAI_API_KEY,
-    base_url="https://api.x.ai/v1",
-    model="grok-beta", # or grok-2
-    temperature=0
-)
+# --- Agent Identity Registry ---
+# Maps agent_type -> { agent_id, persona_hash } for the current session
+_agent_identities = {}
 
 # --- Agent State ---
 class AgentState(TypedDict):
@@ -40,15 +37,44 @@ class AgentState(TypedDict):
 
 # --- Agent Constructors ---
 
-def create_agent(tools, system_prompt):
-    """Generic helper to create an agent with specific tools and persona."""
+def _register_agent_identity(agent_type: str, system_prompt: str) -> dict:
+    """Register or retrieve the identity for an agent type in this session."""
+    if agent_type not in _agent_identities:
+        _agent_identities[agent_type] = {
+            "agent_id": generate_agent_id(agent_type),
+            "persona_hash": compute_persona_hash(system_prompt),
+            "agent_type": agent_type,
+            "node_id": get_node_id(),
+        }
+    return _agent_identities[agent_type]
+
+
+def get_agent_identities() -> dict:
+    """Return the full agent identity registry for this session."""
+    return dict(_agent_identities)
+
+
+def create_agent(tools, system_prompt, agent_type=None):
+    """Generic helper to create an agent with specific tools and persona.
+
+    Uses the multi-LLM factory to get the correct model for this agent type.
+    The provider/model is determined by llm_config.json — each agent can be
+    assigned a different LLM backend if the trader desires.
+    """
+    # Register identity if agent_type provided
+    if agent_type:
+        _register_agent_identity(agent_type, system_prompt)
+
+    # Get the LLM for this specific agent type (may differ per agent)
+    agent_llm = get_langchain_llm(agent_type=agent_type, temperature=0)
+
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         MessagesPlaceholder(variable_name="messages"),
  ("user", "Please adhere to the system prompt and respond in a JSON format."),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
-    agent = create_openai_tools_agent(llm, tools, prompt)
+    agent = create_openai_tools_agent(agent_llm, tools, prompt)
     executor = AgentExecutor(agent=agent, tools=tools)
     return executor
 
@@ -72,7 +98,7 @@ async def log_agent_performance(agent_name, start_time, success, error=None):
 async def research_node(state):
     """General Web Research Agent."""
     system_prompt = "You are a Research Agent. You can search the web, scrape pages, look up competitors, and check analyst ratings to find missing financial data, supplier relationships, or news details."
-    agent = create_agent([web_search, scrape_web_page, get_competitors, get_analyst_ratings], system_prompt)
+    agent = create_agent([web_search, scrape_web_page, get_competitors, get_analyst_ratings], system_prompt, agent_type="ResearchAgent")
     
     start_time = time.time()
     try:
@@ -86,7 +112,7 @@ async def research_node(state):
 async def macro_node(state):
     """Macro-Economic Agent using FRED and web search."""
     system_prompt = "You are a Macro Strategy Agent. You have a tool to fetch current interest rates from FRED. Focus on interest rates, inflation, central bank policy, and geopolitical events. Use your tools to answer questions."
-    agent = create_agent([web_search, get_macro_rates], system_prompt)
+    agent = create_agent([web_search, get_macro_rates], system_prompt, agent_type="MacroAgent")
     
     start_time = time.time()
     try:
@@ -100,7 +126,7 @@ async def macro_node(state):
 async def sentiment_node(state):
     """Sentiment & Alternative Data Agent for Reddit and web scraping."""
     system_prompt = "You are a Sentiment Analyst. You have a tool to scrape Reddit for ticker sentiment. You investigate social media buzz, consumer sentiment, and alternative data trends. You also check insider trading activity to gauge management confidence."
-    agent = create_agent([web_search, scrape_web_page, get_reddit_sentiment, get_insider_trades], system_prompt)
+    agent = create_agent([web_search, scrape_web_page, get_reddit_sentiment, get_insider_trades], system_prompt, agent_type="SentimentAgent")
     
     start_time = time.time()
     try:
@@ -114,7 +140,7 @@ async def sentiment_node(state):
 async def risk_node(state):
     """Risk Management Agent."""
     system_prompt = "You are a Risk Manager. Your job is to check portfolio exposure and assess concentration risk. Use the get_portfolio_exposure tool to check current holdings before we commit to a trade."
-    agent = create_agent([get_portfolio_exposure], system_prompt)
+    agent = create_agent([get_portfolio_exposure], system_prompt, agent_type="RiskManagerAgent")
     
     start_time = time.time()
     try:
@@ -128,7 +154,7 @@ async def risk_node(state):
 async def execution_node(state):
     """Execution Agent."""
     system_prompt = "You are an Execution Trader. Your job is to execute trades based on instructions. Use the execute_trade tool."
-    agent = create_agent([execute_trade], system_prompt)
+    agent = create_agent([execute_trade], system_prompt, agent_type="ExecutionAgent")
     
     start_time = time.time()
     try:
@@ -142,7 +168,7 @@ async def execution_node(state):
 async def strategy_node(state):
     """Strategy Agent."""
     system_prompt = "You are a Derivatives Strategist. Your job is to propose complex option structures (spreads, condors, etc.) that match the analysis outlook. You can also calculate the Greeks for specific options using calculate_option_greeks to assess risk. You can also calculate optimal entry prices based on technical support and suggest stop-loss levels using ATR."
-    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss], system_prompt)
+    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss], system_prompt, agent_type="StrategyAgent")
     
     start_time = time.time()
     try:
@@ -156,7 +182,7 @@ async def strategy_node(state):
 async def scout_node(state):
     """Scout Agent using OpenClaw tools."""
     system_prompt = "You are an Alternative Data Scout. You use OpenClaw stealth technology to scrape web traffic, app rankings, job trends, and Google Trends."
-    agent = create_agent([get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends], system_prompt)
+    agent = create_agent([get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends], system_prompt, agent_type="ScoutAgent")
     
     start_time = time.time()
     try:
@@ -170,7 +196,7 @@ async def scout_node(state):
 async def technical_node(state):
     """Technical Agent using Vision."""
     system_prompt = "You are a Technical Analyst. You use a vision model to look at charts and identify patterns. Use the analyze_chart_pattern tool."
-    agent = create_agent([analyze_chart_pattern], system_prompt)
+    agent = create_agent([analyze_chart_pattern], system_prompt, agent_type="TechnicalAgent")
     
     start_time = time.time()
     try:
@@ -184,7 +210,7 @@ async def technical_node(state):
 async def validation_node(state):
     """Validation Agent."""
     system_prompt = "You are a Validation Agent. Your job is to backtest the specific signal type found to ensure it has a positive historical expectancy before we risk capital. Use the validate_signal_robustness tool."
-    agent = create_agent([validate_signal_robustness], system_prompt)
+    agent = create_agent([validate_signal_robustness], system_prompt, agent_type="ValidationAgent")
     
     start_time = time.time()
     try:
@@ -198,7 +224,7 @@ async def validation_node(state):
 async def news_sentiment_node(state):
     """News Sentiment Agent using local BERT."""
     system_prompt = "You are a News Sentiment Specialist. You use a local FinBERT model to score headlines and news snippets. Use the analyze_sentiment_bert tool."
-    agent = create_agent([analyze_sentiment_bert], system_prompt)
+    agent = create_agent([analyze_sentiment_bert], system_prompt, agent_type="NewsSentimentAgent")
     
     start_time = time.time()
     try:
@@ -212,7 +238,7 @@ async def news_sentiment_node(state):
 async def portfolio_optimizer_node(state):
     """Portfolio Optimizer Agent."""
     system_prompt = "You are a Portfolio Optimizer. You use Mean-Variance Optimization to suggest rebalancing weights for the current portfolio to maximize risk-adjusted returns. Use the optimize_portfolio_mean_variance tool."
-    agent = create_agent([optimize_portfolio_mean_variance], system_prompt)
+    agent = create_agent([optimize_portfolio_mean_variance], system_prompt, agent_type="PortfolioOptimizerAgent")
     
     start_time = time.time()
     try:
@@ -226,7 +252,7 @@ async def portfolio_optimizer_node(state):
 async def sector_rotation_node(state):
     """Sector Rotation Agent."""
     system_prompt = "You are a Sector Rotation Strategist. You analyze relative strength between sectors (e.g., Tech vs Energy) to suggest overweight/underweight allocations. Use the analyze_sector_momentum tool."
-    agent = create_agent([analyze_sector_momentum], system_prompt)
+    agent = create_agent([analyze_sector_momentum], system_prompt, agent_type="SectorRotationAgent")
     
     start_time = time.time()
     try:
@@ -240,70 +266,70 @@ async def sector_rotation_node(state):
 async def volatility_node(state):
     """Volatility Agent."""
     system_prompt = "You are a Volatility Strategist. You analyze the VIX term structure to gauge market fear and hedging costs. Use the analyze_vix_term_structure tool."
-    agent = create_agent([analyze_vix_term_structure], system_prompt)
+    agent = create_agent([analyze_vix_term_structure], system_prompt, agent_type="VolatilityAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="VolatilityAgent")]}
 
 async def correlation_matrix_node(state):
     """Correlation Matrix Agent."""
     system_prompt = "You are a Correlation Analyst. You calculate rolling correlations between assets and benchmarks to assess decoupling or coupling trends. Use the calculate_rolling_correlation tool."
-    agent = create_agent([calculate_rolling_correlation], system_prompt)
+    agent = create_agent([calculate_rolling_correlation], system_prompt, agent_type="CorrelationMatrixAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="CorrelationMatrixAgent")]}
 
 async def seasonality_node(state):
     """Seasonality Agent."""
     system_prompt = "You are a Seasonality Analyst. You analyze historical monthly returns to identify recurring seasonal patterns (e.g., 'Sell in May'). Use the analyze_seasonality tool."
-    agent = create_agent([analyze_seasonality], system_prompt)
+    agent = create_agent([analyze_seasonality], system_prompt, agent_type="SeasonalityAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="SeasonalityAgent")]}
 
 async def fundamental_node(state):
     """Fundamental Analysis Agent."""
     system_prompt = "You are a Fundamental Analyst. You analyze company financial health using key ratios like P/E, PEG, ROE, and Debt-to-Equity. Use the get_fundamental_ratios tool."
-    agent = create_agent([get_fundamental_ratios], system_prompt)
+    agent = create_agent([get_fundamental_ratios], system_prompt, agent_type="FundamentalAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="FundamentalAgent")]}
 
 async def earnings_node(state):
     """Earnings Analysis Agent."""
     system_prompt = "You are an Earnings Analyst. You track upcoming earnings dates and consensus estimates to anticipate volatility events. Use the get_earnings_calendar tool."
-    agent = create_agent([get_earnings_calendar], system_prompt)
+    agent = create_agent([get_earnings_calendar], system_prompt, agent_type="EarningsAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="EarningsAgent")]}
 
 async def short_interest_node(state):
     """Short Interest Analysis Agent."""
     system_prompt = "You are a Short Interest Analyst. You track short interest levels and days-to-cover to identify potential short squeezes or bearish sentiment. Use the get_short_interest tool."
-    agent = create_agent([get_short_interest], system_prompt)
+    agent = create_agent([get_short_interest], system_prompt, agent_type="ShortInterestAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="ShortInterestAgent")]}
 
 async def news_aggregator_node(state):
     """News Aggregator Agent."""
     system_prompt = "You are a News Aggregator. You fetch news from various RSS feeds to get a broader market perspective. Use the fetch_rss_feed tool."
-    agent = create_agent([fetch_rss_feed], system_prompt)
+    agent = create_agent([fetch_rss_feed], system_prompt, agent_type="NewsAggregatorAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="NewsAggregatorAgent")]}
 
 async def supply_chain_visualizer_node(state):
     """Supply Chain Visualizer Agent."""
     system_prompt = "You are a Supply Chain Visualizer. You generate Graphviz DOT code to visualize the relationships (suppliers, customers, competitors) for a ticker. Use the visualize_supply_chain tool."
-    agent = create_agent([visualize_supply_chain], system_prompt)
+    agent = create_agent([visualize_supply_chain], system_prompt, agent_type="SupplyChainVisualizerAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="SupplyChainVisualizerAgent")]}
 
 async def sec_filings_node(state):
     """SEC Filings Agent."""
     system_prompt = "You are an SEC Filings Analyst. You search 10-K and 10-Q filings for specific sections like 'Risk Factors' or 'MD&A' to uncover hidden risks or opportunities. Use the get_sec_filing_section tool."
-    agent = create_agent([get_sec_filing_section], system_prompt)
+    agent = create_agent([get_sec_filing_section], system_prompt, agent_type="SECFilingsAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="SECFilingsAgent")]}
 
 async def peer_comparison_node(state):
     """Peer Comparison Agent."""
     system_prompt = "You are a Peer Comparison Analyst. You compare companies against their competitors to identify relative value. Use the compare_peers tool."
-    agent = create_agent([compare_peers], system_prompt)
+    agent = create_agent([compare_peers], system_prompt, agent_type="PeerComparisonAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="PeerComparisonAgent")]}
 
@@ -363,8 +389,9 @@ async def supervisor_node(state):
     }
     """
     
-    # We construct a prompt for the supervisor
-    response = await llm.ainvoke([
+    # We construct a prompt for the supervisor using its configured LLM
+    supervisor_llm = get_langchain_llm(agent_type="Supervisor", temperature=0)
+    response = await supervisor_llm.ainvoke([
         SystemMessage(content=system_prompt),
         *messages
     ])

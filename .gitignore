@@ -34,3 +34,8 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Local Node Identity, Learning & LLM Config (never share)
+node_identity.json
+learning_config.json
+llm_config.json

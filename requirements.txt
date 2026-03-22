@@ -29,3 +29,8 @@ beautifulsoup4
 fpdf
 streamlit-mic-recorder
 gTTS
+cryptography>=42.0.0
+langchain-anthropic
+langchain-google-genai
+anthropic
+google-generativeai

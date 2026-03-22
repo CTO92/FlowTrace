@@ -1,8 +1,9 @@
 import os
 import json
 import logging
-from openai import AsyncOpenAI
 from dotenv import load_dotenv
+
+from llm_config import async_chat_completion, is_llm_configured
 
 load_dotenv()
 
@@ -10,17 +11,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-XAI_API_KEY = os.getenv("XAI_API_KEY")
-
-# Initialize Client (using OpenAI-compatible SDK for xAI)
-client = None
-if XAI_API_KEY:
-    client = AsyncOpenAI(
-        api_key=XAI_API_KEY,
-        base_url="https://api.x.ai/v1"
-    )
-else:
-    logger.warning("XAI_API_KEY not found. Grok analysis will be skipped.")
+if not is_llm_configured("AnalysisEngine"):
+    logger.warning("No LLM configured for AnalysisEngine. Analysis will be skipped.")
 
 SYSTEM_PROMPT = """
 You are a Chief Investment Officer (CIO) and quantitative analyst.
@@ -67,8 +59,8 @@ async def analyze_impact(source_ticker, related_assets, news_item, agent_data=No
     """
     Sends news and related asset context to Grok for analysis.
     """
-    if not client:
-        logger.error("Grok client not initialized. Check API Key.")
+    if not is_llm_configured("AnalysisEngine"):
+        logger.error("LLM not configured for AnalysisEngine. Check API keys.")
         return None
 
     # Extract news details
@@ -114,30 +106,28 @@ async def analyze_impact(source_ticker, related_assets, news_item, agent_data=No
     """
 
     try:
-        logger.info(f"Sending analysis request to Grok for {source_ticker}...")
-        
-        response = await client.chat.completions.create(
-            model="grok-beta", # Adjust model name as needed (e.g., grok-2)
+        logger.info(f"Sending analysis request for {source_ticker}...")
+
+        content = await async_chat_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
             ],
-            temperature=0.2, # Low temperature for analytical precision
-            response_format={"type": "json_object"} 
+            agent_type="AnalysisEngine",
+            temperature=0.2,
+            json_mode=True,
         )
 
-        content = response.choices[0].message.content
-        
         try:
             data = json.loads(content)
             return data
         except json.JSONDecodeError:
-            logger.error("Failed to parse JSON from Grok response.")
+            logger.error("Failed to parse JSON from LLM response.")
             logger.debug(f"Raw response: {content}")
             return None
 
     except Exception as e:
-        logger.error(f"Error during Grok analysis: {e}")
+        logger.error(f"Error during analysis: {e}")
         return None
 
 async def generate_briefing(signals):
@@ -145,9 +135,9 @@ async def generate_briefing(signals):
     Generates a morning briefing based on high-conviction signals.
     signals: List of dictionaries containing signal data.
     """
-    if not client:
-        return "Grok client not initialized."
-    
+    if not is_llm_configured("AnalysisEngine"):
+        return "LLM not configured for analysis."
+
     if not signals:
         return "No significant market signals found for a briefing."
     
@@ -166,14 +156,14 @@ async def generate_briefing(signals):
     """
     
     try:
-        response = await client.chat.completions.create(
-            model="grok-beta",
+        content = await async_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a senior financial reporter."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7
+            agent_type="AnalysisEngine",
+            temperature=0.7,
         )
-        return response.choices[0].message.content
+        return content
     except Exception as e:
         return f"Error generating briefing: {e}"

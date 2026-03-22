@@ -4,22 +4,16 @@ import glob
 import json
 from sec_edgar_downloader import Downloader
 from bs4 import BeautifulSoup
-from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
+from llm_config import sync_chat_completion
 
 load_dotenv()
 
 # Configuration
 DB_PATH = os.path.join(os.path.dirname(__file__), "knowledge_graph.db")
-XAI_API_KEY = os.getenv("XAI_API_KEY")
 SEC_EMAIL = os.getenv("SEC_EMAIL", "user@example.com") # Required by SEC API
 FILINGS_PATH = os.path.join(os.path.dirname(__file__), "sec_filings")
-
-client = OpenAI(
-    api_key=XAI_API_KEY,
-    base_url="https://api.x.ai/v1"
-)
 
 def get_hub_companies():
     """Get list of companies to update."""
@@ -82,17 +76,17 @@ def extract_relationships_with_grok(ticker, text):
     """
     
     try:
-        response = client.chat.completions.create(
-            model="grok-beta",
+        content = sync_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a financial data extractor."},
                 {"role": "user", "content": prompt}
             ],
-            response_format={"type": "json_object"}
+            agent_type="KnowledgeGraph",
+            json_mode=True,
         )
-        return json.loads(response.choices[0].message.content)
+        return json.loads(content)
     except Exception as e:
-        print(f"[-] Grok Error: {e}")
+        print(f"[-] LLM Error: {e}")
         return {"relationships": []}
 
 def update_db(source_ticker, relationships):

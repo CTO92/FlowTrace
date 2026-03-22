@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agentforum
+      POSTGRES_USER: agentforum
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentforum"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for rate limiting and pub/sub
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # AgentForum API Server
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentforum:${DB_PASSWORD:-changeme}@db:5432/agentforum
+      REDIS_URL: redis://redis:6379
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-admin-secret-change-me}
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Celery Worker for background tasks (outcome resolution)
+  worker:
+    build: .
+    command: celery -A services.outcome_tracker worker --beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentforum:${DB_PASSWORD:-changeme}@db:5432/agentforum
+      REDIS_URL: redis://redis:6379
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

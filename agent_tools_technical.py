@@ -2,24 +2,12 @@ import os
 import time
 import base64
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from openclaw_wrapper import OpenClawSession
 from dotenv import load_dotenv
+from llm_config import get_vision_llm
 
 load_dotenv()
-
-XAI_API_KEY = os.getenv("XAI_API_KEY")
-
-# Initialize Vision Model
-# Note: Assuming 'grok-vision-beta' or similar is available via the xAI endpoint.
-# If not, this mimics the OpenAI Vision API structure which xAI is compatible with.
-vision_llm = ChatOpenAI(
-    api_key=XAI_API_KEY,
-    base_url="https://api.x.ai/v1",
-    model="grok-vision-beta", 
-    temperature=0.1
-)
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
@@ -70,6 +58,7 @@ async def analyze_chart_pattern(ticker: str):
                 ]
             )
             
+            vision_llm = get_vision_llm(temperature=0.1)
             response = await vision_llm.ainvoke([msg])
             analysis = response.content
             

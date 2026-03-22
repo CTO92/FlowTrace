@@ -185,13 +185,17 @@ async def process_news_item(item):
                 # Save to DB for Dashboard
                 save_signals_to_db(ticker, analysis_result, agent_findings)
 
-async def main():
+async def start_listener():
+    """
+    Start the news ingestion listener. Can be called as a module by
+    ContinuousMonitorAgent or run standalone.
+    """
     if not POLYGON_API_KEY:
         print("[-] Error: POLYGON_API_KEY not set in .env")
         return
 
     if not os.path.exists(DB_PATH):
-        print(f"[-] Warning: Database not found at {DB_PATH}. Run Phase 2 first.")
+        print(f"[-] Warning: Database not found at {DB_PATH}. Run build_knowledge_graph.py first.")
 
     print("[*] Starting Polygon.io News Listener...")
     print("[*] Filtering for keywords: " + ", ".join(EVENT_KEYWORDS[:5]) + "...")
@@ -203,6 +207,12 @@ async def main():
     async for msgs in client:
         for msg in msgs:
             await process_news_item(msg)
+
+
+# Keep backward compatibility
+async def main():
+    await start_listener()
+
 
 if __name__ == "__main__":
     try:

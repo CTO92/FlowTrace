@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import os
+import json
 import time
 import asyncio
 from agent_workflow import run_research_task
@@ -17,6 +18,18 @@ from gtts import gTTS
 import io
 from polygon import RESTClient
 from agent_workflow import identify_agents_for_prompt_improvement
+from node_identity import load_identity, get_forum_status
+from learning_config_manager import load_config, save_config, get_participation_intensity
+from agent_learning import (
+    get_learning_summary, calculate_signal_stats, calculate_agent_performance,
+    calibrate_confidence, detect_market_regime, generate_prompt_improvement_suggestions,
+)
+from agent_consensus import get_recent_consensus_signals
+from forum_config import is_forum_configured
+from llm_config import (
+    load_llm_config, save_llm_config, get_available_providers,
+    reload_config,
+)
 
 # --- Configuration ---
 st.set_page_config(
@@ -286,10 +299,10 @@ else:
 
     # Tabs
     # Reordered for Phase 4 Interface
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
-        "📡 Live Feed", "💬 Analyst Chat", "📊 Analysis & History", "🤖 Agent Logs", 
-        "💼 Portfolio", "🖼️ Gallery", "⚙️ Settings", "📈 Performance", 
-        "⚠️ Risk Analysis", "👀 Watchlist", "🌍 Macro Dashboard"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+        "📡 Live Feed", "💬 Analyst Chat", "📊 Analysis & History", "🤖 Agent Logs",
+        "💼 Portfolio", "🖼️ Gallery", "⚙️ Settings", "📈 Performance",
+        "⚠️ Risk Analysis", "👀 Watchlist", "🌍 Macro Dashboard", "🧠 Learning & AI"
     ])
 
     with tab1:
@@ -605,8 +618,13 @@ else:
         load_dotenv(env_path, override=True)
         
         with st.form("settings_form"):
-            st.markdown("### API Keys")
-            xai_key = st.text_input("xAI API Key", value=os.getenv("XAI_API_KEY", ""), type="password")
+            st.markdown("### LLM API Keys")
+            xai_key = st.text_input("xAI (Grok) API Key", value=os.getenv("XAI_API_KEY", ""), type="password")
+            anthropic_key = st.text_input("Anthropic (Claude) API Key", value=os.getenv("ANTHROPIC_API_KEY", ""), type="password")
+            openai_key = st.text_input("OpenAI API Key", value=os.getenv("OPENAI_API_KEY", ""), type="password")
+            google_key = st.text_input("Google (Gemini) API Key", value=os.getenv("GOOGLE_API_KEY", ""), type="password")
+
+            st.markdown("### Data API Keys")
             poly_key = st.text_input("Polygon.io API Key", value=os.getenv("POLYGON_API_KEY", ""), type="password")
             finn_key = st.text_input("Finnhub API Key", value=os.getenv("FINNHUB_API_KEY", ""), type="password")
             serp_key = st.text_input("Serper API Key", value=os.getenv("SERPER_API_KEY", ""), type="password")
@@ -625,6 +643,9 @@ else:
                     with open(env_path, 'w') as f: pass
                 
                 set_key(env_path, "XAI_API_KEY", xai_key)
+                set_key(env_path, "ANTHROPIC_API_KEY", anthropic_key)
+                set_key(env_path, "OPENAI_API_KEY", openai_key)
+                set_key(env_path, "GOOGLE_API_KEY", google_key)
                 set_key(env_path, "POLYGON_API_KEY", poly_key)
                 set_key(env_path, "FINNHUB_API_KEY", finn_key)
                 set_key(env_path, "SERPER_API_KEY", serp_key)
@@ -651,7 +672,68 @@ else:
                         st.info("No improvements suggested (or no performance data yet).")
         
         st.markdown("---")
-        st.subheader("⚠️ Danger Zone")
+        st.subheader("LLM Provider Configuration")
+        st.caption("Choose which AI model powers each agent. Leave blank to use the default.")
+
+        llm_cfg = load_llm_config()
+        providers = get_available_providers()
+
+        # Show which providers have keys
+        prov_cols = st.columns(4)
+        for i, (name, info) in enumerate(providers.items()):
+            col = prov_cols[i % 4]
+            status = "Configured" if info["configured"] else "No API Key"
+            color = "#00ff88" if info["configured"] else "#ff4444"
+            col.markdown(f"**{name.upper()}**: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+
+        configured_providers = [name for name, info in providers.items() if info["configured"]]
+
+        if configured_providers:
+            # Default provider
+            current_default = llm_cfg.get("default_provider", "xai")
+            default_idx = configured_providers.index(current_default) if current_default in configured_providers else 0
+            new_default = st.selectbox("Default LLM Provider", configured_providers, index=default_idx)
+
+            # Default model
+            default_model = llm_cfg.get("default_model", "")
+            provider_cfg = llm_cfg.get("providers", {}).get(new_default, {})
+            new_model = st.text_input("Default Model", value=provider_cfg.get("default_model", default_model))
+
+            # Per-agent assignments
+            st.markdown("#### Per-Agent Overrides")
+            st.caption("Assign specific agents to different providers. Unset = uses default.")
+
+            agent_types = [
+                "Supervisor", "ResearchAgent", "MacroAgent", "SentimentAgent",
+                "FundamentalAgent", "TechnicalAgent", "ScoutAgent", "StrategyAgent",
+                "AnalysisEngine", "DebateAgent", "KnowledgeGraph", "VisionModel",
+            ]
+
+            assignments = llm_cfg.get("agent_assignments", {})
+            new_assignments = {}
+
+            for agent_type in agent_types:
+                current = assignments.get(agent_type)
+                current_prov = current.get("provider", "") if isinstance(current, dict) else ""
+                options = ["(default)"] + configured_providers
+                idx = options.index(current_prov) if current_prov in options else 0
+                selected = st.selectbox(f"{agent_type}", options, index=idx, key=f"llm_{agent_type}")
+                if selected != "(default)":
+                    agent_model = llm_cfg.get("providers", {}).get(selected, {}).get("default_model", "")
+                    new_assignments[agent_type] = {"provider": selected, "model": agent_model}
+
+            if st.button("Save LLM Configuration"):
+                llm_cfg["default_provider"] = new_default
+                llm_cfg["default_model"] = new_model
+                llm_cfg["agent_assignments"] = new_assignments
+                save_llm_config(llm_cfg)
+                reload_config()
+                st.success("LLM configuration saved! Changes take effect on next agent invocation.")
+        else:
+            st.warning("No LLM providers configured. Add at least one API key above and save settings.")
+
+        st.markdown("---")
+        st.subheader("Danger Zone")
         if st.button("Reset Portfolio (Clear All Data)"):
             portfolio_manager.reset_portfolio()
             st.success("Portfolio reset to initial state ($100,000 cash, no positions).")
@@ -1057,6 +1139,192 @@ else:
                 st.line_chart(comm_df / comm_df.iloc[0] * 100)
         else:
             st.error("Failed to fetch macro data. Check internet connection or FRED availability.")
+
+    with tab12:
+        st.subheader("Learning & AI Network")
+
+        # --- Node Identity ---
+        identity = load_identity()
+        learning_config = load_config()
+
+        st.markdown("### Node Identity")
+        id_c1, id_c2, id_c3, id_c4 = st.columns(4)
+        id_c1.metric("Node Alias", identity.get("node_alias", "unknown"))
+        id_c2.metric("Forum Status", get_forum_status().upper())
+        id_c3.metric("Forum Connected", "Yes" if is_forum_configured() else "No (TBD)")
+        id_c4.metric("Intensity", get_participation_intensity().upper())
+
+        # Participation Intensity Setting
+        st.markdown("### Participation Intensity")
+        st.info(
+            "Controls how actively your AI agents engage with the AgentForum network. "
+            "Higher intensity = more debate, faster learning, better trade identification, "
+            "but more LLM API calls and higher costs."
+        )
+        new_intensity = st.select_slider(
+            "Set Intensity",
+            options=["low", "medium", "high"],
+            value=learning_config.get("participation_intensity", "medium"),
+        )
+        if new_intensity != learning_config.get("participation_intensity"):
+            learning_config["participation_intensity"] = new_intensity
+            save_config(learning_config)
+            st.success(f"Participation intensity set to **{new_intensity.upper()}**")
+
+        st.markdown("---")
+
+        # --- Performance Overview ---
+        st.markdown("### Learning Performance")
+        perf = learning_config.get("performance_history", {})
+        p1, p2, p3, p4, p5 = st.columns(5)
+        p1.metric("Total Signals", perf.get("total_signals", 0))
+        p2.metric("Wins", perf.get("wins", 0))
+        p3.metric("Losses", perf.get("losses", 0))
+        p4.metric("Win Rate", f"{perf.get('win_rate', 0):.1%}")
+        p5.metric("Avg Return", f"{perf.get('avg_return', 0):+.2f}%")
+
+        last_review = perf.get("last_review")
+        if last_review:
+            st.caption(f"Last learning review: {last_review}")
+        else:
+            st.caption("No learning review has run yet. The system will review automatically.")
+
+        st.markdown("---")
+
+        # --- Agent Trust Weights ---
+        st.markdown("### Agent Trust Weights")
+        st.caption("Weights > 1.0 mean the system trusts this agent more. < 1.0 means less.")
+
+        agent_weights = learning_config.get("agent_weights", {})
+        if agent_weights:
+            weights_df = pd.DataFrame(
+                [(k, v) for k, v in sorted(agent_weights.items(), key=lambda x: x[1], reverse=True)],
+                columns=["Agent", "Weight"],
+            )
+            fig_weights = px.bar(
+                weights_df, x="Agent", y="Weight",
+                title="Agent Trust Weights (adjusted by LearningAgent)",
+                color="Weight",
+                color_continuous_scale=["#FF4444", "#FFAA00", "#44FF44"],
+                range_color=[0.5, 1.5],
+            )
+            fig_weights.add_hline(y=1.0, line_dash="dash", line_color="white", opacity=0.5)
+            fig_weights.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_weights, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- Agent Execution Stats ---
+        st.markdown("### Agent Execution Stats")
+        agent_stats = calculate_agent_performance()
+        if agent_stats:
+            stats_data = []
+            for name, s in agent_stats.items():
+                stats_data.append({
+                    "Agent": name,
+                    "Runs": s["count"],
+                    "Success": s["success"],
+                    "Fail": s["fail"],
+                    "Fail Rate": f"{s['fail_rate']:.1%}",
+                    "Avg Duration (s)": s["avg_duration"],
+                })
+            st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+        else:
+            st.info("No agent execution data yet. Run some research tasks to populate.")
+
+        st.markdown("---")
+
+        # --- Consensus Signals ---
+        st.markdown("### Recent Consensus Signals")
+        consensus_signals = get_recent_consensus_signals(limit=10)
+        if consensus_signals:
+            for sig in consensus_signals:
+                direction_color = "#00FF00" if sig["direction"] == "BULLISH" else "#FF4444"
+                st.markdown(
+                    f'<div style="background-color:#262730;padding:15px;border-radius:10px;'
+                    f'margin-bottom:10px;border-left:5px solid {direction_color};">'
+                    f'<strong>{sig["ticker"]}</strong> — {sig["direction"]} '
+                    f'<span style="color:{direction_color}">Score: {sig["consensus_score"]:.0%}</span><br/>'
+                    f'Expected Move: {sig.get("expected_move_pct", 0):+.1f}% | '
+                    f'Horizon: {sig.get("time_horizon_days", 5)}d | '
+                    f'Raw Conf: {sig.get("raw_confidence", 0):.0f}% -> '
+                    f'Adjusted: {sig.get("adjusted_confidence", 0):.0f}%<br/>'
+                    f'<small>{sig.get("timestamp", "")}</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("No consensus signals yet. The system will generate them as data flows in.")
+
+        st.markdown("---")
+
+        # --- Event Type Weights ---
+        st.markdown("### Event Type Performance Weights")
+        event_weights = learning_config.get("event_type_weights", {})
+        if event_weights:
+            ew_df = pd.DataFrame(
+                [(k, v) for k, v in event_weights.items()],
+                columns=["Event Type", "Weight"],
+            )
+            st.dataframe(ew_df, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- Market Regime (Phase 4) ---
+        st.markdown("### Market Regime Detection")
+        regime = detect_market_regime()
+        if regime:
+            r1, r2 = st.columns(2)
+            r1.metric("Current Regime", regime.get("current_regime", "unknown").replace("_", " ").title())
+            r2.metric("VIX Level", f"{regime.get('vix_level', 0):.1f}")
+            st.caption("Regime affects confidence multipliers: Low VIX = +5%, Normal = neutral, High VIX = -15%")
+        else:
+            st.info("Market regime data unavailable.")
+
+        st.markdown("---")
+
+        # --- Confidence Calibration (Phase 4) ---
+        st.markdown("### Confidence Calibration")
+        cal = calibrate_confidence()
+        if cal:
+            cal_data = []
+            for bucket, data in cal.items():
+                cal_data.append({
+                    "Confidence Bucket": bucket + "%",
+                    "Predicted Win Rate": f"{data['predicted_confidence']}%",
+                    "Actual Win Rate": f"{data['actual_win_rate']}%",
+                    "Calibration Error": f"{data['calibration_error']:+.1f}%",
+                    "Samples": data["sample_size"],
+                })
+            st.dataframe(pd.DataFrame(cal_data), use_container_width=True)
+            st.caption("Positive error = overconfident, Negative = underconfident")
+        else:
+            st.info("Not enough resolved signals for calibration (need 20+).")
+
+        st.markdown("---")
+
+        # --- Network Trust (Phase 4) ---
+        st.markdown("### Network Node Trust")
+        network_trust = learning_config.get("network_node_trust", {})
+        if network_trust:
+            trust_df = pd.DataFrame(
+                [(k, v) for k, v in sorted(network_trust.items(), key=lambda x: x[1], reverse=True)],
+                columns=["Node Alias", "Trust Score"],
+            )
+            st.dataframe(trust_df, use_container_width=True)
+        else:
+            st.info("No network trust data yet. Connect to AgentForum to build trust scores.")
+
+        st.markdown("---")
+
+        # --- Prompt Improvement Suggestions (Phase 4) ---
+        st.markdown("### Agent Improvement Suggestions")
+        suggestions = generate_prompt_improvement_suggestions()
+        if suggestions:
+            for agent, suggestion in suggestions.items():
+                st.warning(f"**{agent}**: {suggestion}")
+        else:
+            st.success("All agents performing within acceptable parameters.")
 
 # Auto-refresh logic
 time.sleep(refresh_rate)
