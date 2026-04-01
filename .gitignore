@@ -42,3 +42,8 @@ llm_config.json
 
 # Internal documentation (not for public distribution)
 learningAgents.md
+
+# Swarm data (local per-trader)
+swarm_personas.json
+swarm_config.json
+agent_performance.log

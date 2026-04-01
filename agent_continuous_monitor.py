@@ -47,8 +47,10 @@ class ContinuousMonitorAgent:
         self._last_health_check = None
         self._last_forum_scan = None
         self._last_signal_process = None
+        self._last_swarm_cycle = None
         self._error_counts = {}
         self._start_time = None
+        self._latest_swarm_brief = None
 
     async def start(self):
         """Start all background monitoring loops."""
@@ -74,6 +76,9 @@ class ContinuousMonitorAgent:
         # Forum loops only if configured (Phase 3)
         if is_forum_configured():
             self._tasks.append(asyncio.create_task(self._forum_loop()))
+
+        # Trading Agent Swarm loop
+        self._tasks.append(asyncio.create_task(self._swarm_loop()))
 
         try:
             await asyncio.gather(*self._tasks)
@@ -251,6 +256,199 @@ class ContinuousMonitorAgent:
                 logger.error(f"[Forum] Error: {e}")
                 await asyncio.sleep(60)
 
+    async def _swarm_loop(self):
+        """
+        Continuous Trading Agent Swarm simulation loop.
+        Runs alongside all other loops. Generates personas on first run,
+        then continuously runs simulation rounds, synthesizes output,
+        and feeds results into the consensus pipeline.
+        """
+        from swarm_config import load_swarm_config, is_swarm_enabled, get_simulation_params
+        from swarm_persona_generator import generate_personas, load_personas, save_personas, personas_exist
+        from swarm_trading_floor import TradingFloor
+        from swarm_synthesizer import synthesize_cycle, format_swarm_signals_for_consensus
+        from swarm_evolutionary import run_evolution_cycle
+
+        if not is_swarm_enabled():
+            logger.info("[Swarm] Trading Agent Swarm is disabled in config. Skipping.")
+            return
+
+        config = load_swarm_config()
+
+        # Initialize personas (generate on first run, load thereafter)
+        try:
+            if personas_exist():
+                personas = load_personas()
+                logger.info(f"[Swarm] Loaded {len(personas)} existing personas")
+            else:
+                logger.info(f"[Swarm] Generating {config['swarm_size']} initial personas...")
+                personas = await generate_personas(config["swarm_size"], config.get("archetypes"))
+                save_personas(personas)
+                logger.info(f"[Swarm] Generated and saved {len(personas)} personas")
+        except Exception as e:
+            self._record_error("swarm", str(e))
+            logger.error(f"[Swarm] Persona initialization failed: {e}")
+            return
+
+        # Initialize trading floor
+        floor = TradingFloor()
+        await floor.initialize(personas)
+
+        cycle_number = 0
+
+        while self.running:
+            try:
+                sim_params = get_simulation_params()
+                round_interval = sim_params["round_interval_seconds"]
+                max_rounds = sim_params["max_rounds_per_cycle"]
+
+                cycle_number += 1
+                floor.current_cycle = cycle_number
+                logger.info(f"[Swarm] Starting cycle {cycle_number} ({max_rounds} rounds, {round_interval}s interval)")
+
+                for round_num in range(max_rounds):
+                    if not self.running:
+                        break
+
+                    # Gather current market context from existing signals
+                    market_context = self._get_swarm_market_context()
+
+                    # Run one simulation round
+                    round_summary = await floor.run_round(market_context)
+
+                    # Resolve any matured positions
+                    tickers = round_summary.get("tickers", [])
+                    if tickers:
+                        market_data = self._get_current_prices(tickers)
+                        await floor.resolve_positions(market_data)
+
+                    await asyncio.sleep(round_interval)
+
+                # Cycle complete — synthesize output
+                swarm_brief, swarm_signals = synthesize_cycle(floor.db_path, cycle_number)
+
+                # Store swarm brief for Supervisor access
+                self._latest_swarm_brief = swarm_brief
+
+                # Feed swarm signals into consensus pipeline
+                if swarm_signals:
+                    formatted = format_swarm_signals_for_consensus(swarm_signals)
+                    emitted = process_raw_signals(formatted)
+                    if emitted:
+                        logger.info(f"[Swarm] Cycle {cycle_number}: {len(emitted)} signals fed to consensus")
+
+                # Run evolutionary cycle (prune/promote)
+                try:
+                    evolution_result = run_evolution_cycle(floor.db_path)
+                    pruned = len(evolution_result.get("pruned", []))
+                    promoted = len(evolution_result.get("promoted", []))
+                    if pruned > 0 or promoted > 0:
+                        logger.info(f"[Swarm] Evolution: pruned {pruned}, promoted {promoted}")
+                        # Reload personas after evolution
+                        if personas_exist():
+                            personas = load_personas()
+                            floor._personas = personas
+                            floor._leader_ids = floor._select_leaders(personas, len(personas))
+                except Exception as e:
+                    logger.warning(f"[Swarm] Evolution cycle error: {e}")
+
+                self._last_swarm_cycle = datetime.now(timezone.utc)
+
+            except Exception as e:
+                self._record_error("swarm", str(e))
+                logger.error(f"[Swarm] Error in cycle {cycle_number}: {e}")
+                await asyncio.sleep(60)
+
+    def _get_swarm_market_context(self) -> dict:
+        """
+        Build market context dict for the swarm from existing signals
+        and knowledge graph data.
+        """
+        import sqlite3
+
+        kg_db = os.path.join(BASE_DIR, "knowledge_graph.db")
+        context = {
+            "active_tickers": [],
+            "ticker_data": {},
+            "ticker_sectors": {},
+        }
+
+        if not os.path.exists(kg_db):
+            return context
+
+        try:
+            conn = sqlite3.connect(kg_db)
+            conn.row_factory = sqlite3.Row
+
+            # Get tickers from recent signals
+            one_day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+            rows = conn.execute("""
+                SELECT DISTINCT target_ticker FROM signals
+                WHERE timestamp >= ?
+                LIMIT 30
+            """, (one_day_ago,)).fetchall()
+
+            tickers = [r["target_ticker"] for r in rows if r["target_ticker"]]
+            context["active_tickers"] = tickers
+
+            # Get basic data per ticker from recent signals
+            for ticker in tickers:
+                row = conn.execute("""
+                    SELECT expected_move_pct, confidence
+                    FROM signals
+                    WHERE target_ticker = ?
+                    ORDER BY timestamp DESC LIMIT 1
+                """, (ticker,)).fetchone()
+
+                if row:
+                    context["ticker_data"][ticker] = {
+                        "change_pct": row["expected_move_pct"] or 0,
+                        "sentiment": (row["confidence"] or 50) / 100 - 0.5,
+                        "price": None,  # Filled by yfinance if available
+                    }
+
+            # Try to get current prices
+            try:
+                import yfinance as yf
+                if tickers:
+                    data = yf.download(tickers[:10], period="1d", progress=False)
+                    if not data.empty and "Close" in data.columns:
+                        for ticker in tickers[:10]:
+                            try:
+                                price = float(data["Close"][ticker].iloc[-1])
+                                if ticker in context["ticker_data"]:
+                                    context["ticker_data"][ticker]["price"] = price
+                                else:
+                                    context["ticker_data"][ticker] = {"price": price, "change_pct": 0, "sentiment": 0}
+                            except Exception:
+                                pass
+            except ImportError:
+                pass
+
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[Swarm] Market context build error: {e}")
+
+        return context
+
+    def _get_current_prices(self, tickers: list) -> dict:
+        """Fetch current prices for a list of tickers via yfinance."""
+        prices = {}
+        try:
+            import yfinance as yf
+            if tickers:
+                data = yf.download(tickers[:20], period="1d", progress=False)
+                if not data.empty and "Close" in data.columns:
+                    for ticker in tickers:
+                        try:
+                            price = float(data["Close"][ticker].iloc[-1])
+                            prices[ticker] = {"price": price}
+                        except Exception:
+                            pass
+        except ImportError:
+            pass
+        return prices
+
     async def _health_check_loop(self):
         """Monitor system health every 5 minutes."""
         while self.running:
@@ -337,11 +535,14 @@ class ContinuousMonitorAgent:
                 "signal_processing": _component_status("signal_processing"),
                 "learning": _component_status("learning"),
                 "forum": _component_status("forum") if is_forum_configured() else "not_configured",
+                "swarm": _component_status("swarm"),
                 "health": "healthy",
             },
             "last_learning_review": self._last_learning_review.isoformat() if self._last_learning_review else None,
             "last_forum_scan": self._last_forum_scan.isoformat() if self._last_forum_scan else None,
             "last_signal_process": self._last_signal_process.isoformat() if self._last_signal_process else None,
+            "last_swarm_cycle": self._last_swarm_cycle.isoformat() if self._last_swarm_cycle else None,
+            "swarm_brief": self._latest_swarm_brief,
             "error_counts": dict(self._error_counts),
             "performance": config.get("performance_history", {}),
         }

@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
         "SupplyChainVisualizerAgent": 1.0,
         "SECFilingsAgent": 1.0,
         "PeerComparisonAgent": 1.0,
+        "swarm": 1.0,  # Weight for Trading Agent Swarm consensus signals
     },
 
     # Trust scores for remote nodes on the AgentForum (node_alias -> score)
@@ -146,18 +147,24 @@ def get_intensity_thresholds() -> dict:
             "forum_scan_interval": 300,   # seconds
             "debate_engagement": "minimal",  # only respond to direct challenges
             "max_theses_per_day": 3,
+            "swarm_round_interval": 120,       # 2 min between swarm rounds
+            "swarm_max_rounds_per_cycle": 20,
         },
         "medium": {
             "min_publish_confidence": 0.75,
             "forum_scan_interval": 60,
             "debate_engagement": "moderate",  # engage on watchlist tickers
             "max_theses_per_day": 10,
+            "swarm_round_interval": 30,        # 30 sec between swarm rounds
+            "swarm_max_rounds_per_cycle": 50,
         },
         "high": {
             "min_publish_confidence": 0.65,
             "forum_scan_interval": 15,
             "debate_engagement": "aggressive",  # engage broadly
             "max_theses_per_day": 50,
+            "swarm_round_interval": 10,        # 10 sec between swarm rounds
+            "swarm_max_rounds_per_cycle": 100,
         },
     }
 

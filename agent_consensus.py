@@ -83,6 +83,7 @@ def calculate_consensus(
     forum_support_count: int = 0,
     forum_challenge_count: int = 0,
     forum_agent_scores: dict = None,
+    swarm_consensus: dict = None,
 ) -> dict:
     """
     Calculate a weighted consensus score from agent outputs and forum debate.
@@ -100,6 +101,7 @@ def calculate_consensus(
         forum_support_count: Number of forum agents supporting this thesis
         forum_challenge_count: Number of forum agents challenging this thesis
         forum_agent_scores: Dict of {agent_id: reputation_score} from forum participants
+        swarm_consensus: Optional SwarmConsensusSignal dict from the Trading Agent Swarm
 
     Returns:
         Consensus signal dict with adjusted scores
@@ -153,7 +155,23 @@ def calculate_consensus(
             elif support_ratio < 0.3:
                 forum_multiplier *= 0.85  # strong network challenge
 
-    # 6. Calculate final adjusted confidence
+    # 6. Apply swarm consensus adjustment
+    swarm_multiplier = 1.0
+    if swarm_consensus and swarm_consensus.get("ticker") == ticker:
+        swarm_direction_match = (swarm_consensus.get("direction") == direction)
+        swarm_strength = swarm_consensus.get("consensus_strength", 0.5)
+        swarm_weight = get_agent_weight("swarm")
+
+        if swarm_direction_match:
+            # Swarm agrees — boost proportional to consensus strength and swarm weight
+            swarm_multiplier = 1.0 + (swarm_strength - 0.5) * 0.2 * swarm_weight
+        else:
+            # Swarm disagrees — penalize proportional to consensus strength
+            swarm_multiplier = 1.0 - (swarm_strength - 0.5) * 0.15 * swarm_weight
+
+        swarm_multiplier = max(0.80, min(1.15, swarm_multiplier))
+
+    # 7. Calculate final adjusted confidence
     raw_normalized = raw_confidence / 100.0  # normalize to 0-1
 
     adjusted = (
@@ -163,6 +181,7 @@ def calculate_consensus(
         * sector_multiplier
         * regime_multiplier
         * forum_multiplier
+        * swarm_multiplier
     )
 
     # Clamp to [0, 1]
@@ -193,6 +212,7 @@ def calculate_consensus(
             "sector_multiplier": round(sector_multiplier, 3),
             "regime_multiplier": round(regime_multiplier, 3),
             "forum_multiplier": round(forum_multiplier, 3),
+            "swarm_multiplier": round(swarm_multiplier, 3),
         },
         "node_id": get_node_id(),
         "agent_id": _get_agent_id(),
@@ -362,6 +382,13 @@ def process_raw_signals(raw_signals: list) -> list:
             s.get("agent_name", "Unknown") for s in signals
         ))
 
+        # Check if any signal carries swarm consensus data
+        swarm_data = None
+        for s in signals:
+            if s.get("swarm_consensus"):
+                swarm_data = s["swarm_consensus"]
+                break
+
         signal = calculate_consensus(
             ticker=ticker,
             direction=direction,
@@ -370,6 +397,7 @@ def process_raw_signals(raw_signals: list) -> list:
             event_type=primary_event,
             contributing_agents=contributing,
             reasoning=combined_reasoning,
+            swarm_consensus=swarm_data,
         )
 
         signal_id = emit_signal(signal)

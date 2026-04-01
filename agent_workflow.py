@@ -34,6 +34,7 @@ _agent_identities = {}
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     next: str
+    swarm_brief: dict  # Optional: SwarmBrief from Trading Agent Swarm
 
 # --- Agent Constructors ---
 
@@ -389,10 +390,33 @@ async def supervisor_node(state):
     }
     """
     
+    # Inject SwarmBrief if available
+    active_system_prompt = system_prompt
+    swarm_brief = state.get("swarm_brief")
+    if swarm_brief and swarm_brief.get("swarm_size", 0) > 0:
+        try:
+            from swarm_synthesizer import format_swarm_brief_for_supervisor
+            swarm_text = format_swarm_brief_for_supervisor(swarm_brief)
+            active_system_prompt += f"""
+
+    TRADING AGENT SWARM INTELLIGENCE:
+    The following is a synthesized brief from the local Trading Agent Swarm — a population
+    of {swarm_brief.get('swarm_size', 'N')} autonomous agents with diverse trading
+    philosophies that have been continuously debating and sharing results.
+
+    {swarm_text}
+
+    Use this swarm intelligence to inform your delegation decisions. If the swarm has strong
+    consensus on a ticker, consider deploying specialists to validate. If the swarm is deeply
+    divided, investigate both sides. If the swarm flags an anomaly, prioritize it.
+    """
+        except ImportError:
+            pass
+
     # We construct a prompt for the supervisor using its configured LLM
     supervisor_llm = get_langchain_llm(agent_type="Supervisor", temperature=0)
     response = await supervisor_llm.ainvoke([
-        SystemMessage(content=system_prompt),
+        SystemMessage(content=active_system_prompt),
         *messages
     ])
     

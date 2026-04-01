@@ -30,6 +30,7 @@ from llm_config import (
     load_llm_config, save_llm_config, get_available_providers,
     reload_config,
 )
+from swarm_config import load_swarm_config, save_swarm_config, is_swarm_enabled
 
 # --- Configuration ---
 st.set_page_config(
@@ -299,10 +300,11 @@ else:
 
     # Tabs
     # Reordered for Phase 4 Interface
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
         "📡 Live Feed", "💬 Analyst Chat", "📊 Analysis & History", "🤖 Agent Logs",
         "💼 Portfolio", "🖼️ Gallery", "⚙️ Settings", "📈 Performance",
-        "⚠️ Risk Analysis", "👀 Watchlist", "🌍 Macro Dashboard", "🧠 Learning & AI"
+        "⚠️ Risk Analysis", "👀 Watchlist", "🌍 Macro Dashboard", "🧠 Learning & AI",
+        "🐝 Trading Swarm",
     ])
 
     with tab1:
@@ -1325,6 +1327,230 @@ else:
                 st.warning(f"**{agent}**: {suggestion}")
         else:
             st.success("All agents performing within acceptable parameters.")
+
+    with tab13:
+        st.subheader("Trading Agent Swarm")
+
+        swarm_cfg = load_swarm_config()
+
+        # --- Swarm Status & Configuration ---
+        st.markdown("### Swarm Configuration")
+
+        sw_c1, sw_c2, sw_c3, sw_c4 = st.columns(4)
+        sw_c1.metric("Status", "ENABLED" if swarm_cfg.get("enabled") else "DISABLED")
+        sw_c2.metric("Swarm Size", swarm_cfg.get("swarm_size", 20))
+        sw_c3.metric("Speed", swarm_cfg.get("simulation_speed", "normal").upper())
+        sw_c4.metric("Round Interval", f"{swarm_cfg.get('round_interval_seconds', 30)}s")
+
+        # Enable/disable toggle
+        swarm_enabled = st.toggle("Enable Trading Swarm", value=swarm_cfg.get("enabled", False))
+        if swarm_enabled != swarm_cfg.get("enabled"):
+            swarm_cfg["enabled"] = swarm_enabled
+            save_swarm_config(swarm_cfg)
+            st.success(f"Swarm {'ENABLED' if swarm_enabled else 'DISABLED'}. Restart monitor to take effect.")
+
+        # Swarm size slider
+        new_size = st.slider(
+            "Swarm Size (number of trading agents)",
+            min_value=5, max_value=10000, value=swarm_cfg.get("swarm_size", 20),
+            step=5,
+            help="5-20: Full LLM per agent. 21-100: LLM for leaders. 100+: LLM per archetype representative.",
+        )
+        if new_size != swarm_cfg.get("swarm_size"):
+            swarm_cfg["swarm_size"] = new_size
+            save_swarm_config(swarm_cfg)
+            st.info(f"Swarm size set to {new_size}. Will take effect on next persona generation.")
+
+        st.markdown("---")
+
+        # --- Archetype Distribution ---
+        st.markdown("### Archetype Distribution")
+        archetypes = swarm_cfg.get("archetypes", {})
+        if archetypes:
+            arch_data = []
+            for name, cfg in archetypes.items():
+                count = max(1, round(cfg.get("weight", 0.1) * swarm_cfg.get("swarm_size", 20)))
+                arch_data.append({
+                    "Archetype": name.replace("_", " ").title(),
+                    "Weight": f"{cfg.get('weight', 0):.0%}",
+                    "Est. Agents": count,
+                    "Bias": cfg.get("bias", ""),
+                    "Indicators": ", ".join(cfg.get("indicators", [])[:3]),
+                })
+            st.dataframe(pd.DataFrame(arch_data), use_container_width=True)
+
+        st.markdown("---")
+
+        # --- Swarm Performance (from DB) ---
+        st.markdown("### Swarm Performance")
+
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+
+            # Overall stats
+            stats = conn.execute("""
+                SELECT
+                    COUNT(*) as total_agents,
+                    SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_agents,
+                    SUM(lifetime_trades) as total_trades,
+                    SUM(lifetime_wins) as total_wins,
+                    SUM(lifetime_losses) as total_losses
+                FROM swarm_agents
+            """).fetchone()
+
+            if stats and stats["total_agents"] > 0:
+                sp1, sp2, sp3, sp4, sp5 = st.columns(5)
+                sp1.metric("Active Agents", stats["active_agents"] or 0)
+                sp2.metric("Total Trades", stats["total_trades"] or 0)
+                sp3.metric("Wins", stats["total_wins"] or 0)
+                sp4.metric("Losses", stats["total_losses"] or 0)
+                total_t = stats["total_trades"] or 0
+                total_w = stats["total_wins"] or 0
+                win_rate = total_w / total_t if total_t > 0 else 0
+                sp5.metric("Win Rate", f"{win_rate:.1%}")
+
+                # Archetype performance chart
+                arch_perf = conn.execute("""
+                    SELECT archetype,
+                           SUM(lifetime_wins) as wins,
+                           SUM(lifetime_losses) as losses,
+                           SUM(lifetime_trades) as trades,
+                           AVG(reputation_score) as avg_rep
+                    FROM swarm_agents WHERE is_active = 1
+                    GROUP BY archetype
+                """).fetchall()
+
+                if arch_perf:
+                    perf_data = []
+                    for r in arch_perf:
+                        trades = r["trades"] or 0
+                        wins = r["wins"] or 0
+                        perf_data.append({
+                            "Archetype": r["archetype"].replace("_", " ").title(),
+                            "Win Rate": round(wins / trades, 3) if trades > 0 else 0,
+                            "Trades": trades,
+                            "Avg Reputation": round(r["avg_rep"], 3) if r["avg_rep"] else 0.5,
+                        })
+
+                    perf_df = pd.DataFrame(perf_data)
+                    if not perf_df.empty and perf_df["Trades"].sum() > 0:
+                        fig_arch = px.bar(
+                            perf_df, x="Archetype", y="Win Rate",
+                            title="Win Rate by Archetype",
+                            color="Win Rate",
+                            color_continuous_scale=["#FF4444", "#FFAA00", "#44FF44"],
+                            range_color=[0.3, 0.7],
+                            text="Trades",
+                        )
+                        fig_arch.add_hline(y=0.5, line_dash="dash", line_color="white", opacity=0.5)
+                        fig_arch.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig_arch, use_container_width=True)
+
+                st.markdown("---")
+
+                # Agent Leaderboard
+                st.markdown("### Agent Leaderboard (Top 20)")
+                leaders = conn.execute("""
+                    SELECT persona_name, archetype, win_rate, lifetime_trades,
+                           lifetime_wins, lifetime_losses, reputation_score
+                    FROM swarm_agents
+                    WHERE is_active = 1 AND lifetime_trades >= 5
+                    ORDER BY win_rate DESC, reputation_score DESC
+                    LIMIT 20
+                """).fetchall()
+
+                if leaders:
+                    leader_data = []
+                    for r in leaders:
+                        leader_data.append({
+                            "Agent": r["persona_name"],
+                            "Archetype": r["archetype"].replace("_", " ").title(),
+                            "Win Rate": f"{r['win_rate']:.1%}",
+                            "Trades": r["lifetime_trades"],
+                            "W/L": f"{r['lifetime_wins']}/{r['lifetime_losses']}",
+                            "Reputation": f"{r['reputation_score']:.2f}",
+                        })
+                    st.dataframe(pd.DataFrame(leader_data), use_container_width=True)
+                else:
+                    st.info("No agents with enough trades for leaderboard yet.")
+
+                st.markdown("---")
+
+                # Recent Simulation Rounds
+                st.markdown("### Recent Simulation Rounds")
+                rounds = conn.execute("""
+                    SELECT round_number, cycle_number, posts_created,
+                           positions_opened, positions_resolved, completed_at
+                    FROM swarm_rounds
+                    ORDER BY round_number DESC
+                    LIMIT 20
+                """).fetchall()
+
+                if rounds:
+                    round_data = []
+                    for r in rounds:
+                        round_data.append({
+                            "Round": r["round_number"],
+                            "Cycle": r["cycle_number"],
+                            "Posts": r["posts_created"],
+                            "Positions Opened": r["positions_opened"],
+                            "Positions Resolved": r["positions_resolved"],
+                            "Completed": r["completed_at"] or "in progress",
+                        })
+                    st.dataframe(pd.DataFrame(round_data), use_container_width=True)
+
+                st.markdown("---")
+
+                # Active Debates
+                st.markdown("### Active Debates")
+                debates = conn.execute("""
+                    SELECT t.ticker, t.direction, t.confidence, t.content,
+                           COUNT(c.post_id) as challenges
+                    FROM swarm_posts t
+                    LEFT JOIN swarm_posts c ON c.in_reply_to = t.post_id
+                    WHERE t.channel = 'theses'
+                    GROUP BY t.post_id
+                    HAVING challenges > 0
+                    ORDER BY challenges DESC
+                    LIMIT 10
+                """).fetchall()
+
+                if debates:
+                    for d in debates:
+                        direction_color = "#00FF00" if d["direction"] == "BULLISH" else "#FF4444" if d["direction"] == "BEARISH" else "#AAAAAA"
+                        st.markdown(
+                            f'<div style="background-color:#262730;padding:12px;border-radius:8px;'
+                            f'margin-bottom:8px;border-left:4px solid {direction_color};">'
+                            f'<strong>{d["ticker"]}</strong> — {d["direction"]} '
+                            f'(conf: {d["confidence"]:.0%}) — '
+                            f'{d["challenges"]} challenge(s)<br/>'
+                            f'<small>{d["content"][:200]}</small>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.info("No active debates yet. Enable the swarm to start simulations.")
+
+            else:
+                st.info(
+                    "No swarm data yet. Enable the Trading Swarm above and start the "
+                    "ContinuousMonitorAgent to begin swarm simulations."
+                )
+
+            conn.close()
+        except Exception as e:
+            st.warning(f"Could not load swarm data: {e}")
+
+        st.markdown("---")
+
+        # Anti-Convergence Settings
+        st.markdown("### Anti-Convergence Settings")
+        anti_conv = swarm_cfg.get("anti_convergence", {})
+        ac1, ac2, ac3 = st.columns(3)
+        ac1.metric("Max Agreement Ratio", f"{anti_conv.get('max_agreement_ratio', 0.85):.0%}")
+        ac2.metric("Forced Contrarian %", f"{anti_conv.get('forced_contrarian_pct', 0.10):.0%}")
+        ac3.metric("Mutation Rate", f"{anti_conv.get('opinion_mutation_rate', 0.05):.0%}")
 
 # Auto-refresh logic
 time.sleep(refresh_rate)
