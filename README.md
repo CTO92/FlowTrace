@@ -340,12 +340,23 @@ Edit `swarm_config.json` in the project root:
 
 ### Swarm Size and Cost Considerations
 
-| Swarm Size | LLM Calls/Round | Behavior | Estimated Cost/Cycle |
+The number of LLM calls per simulation round is **configurable** via `llm_calls_per_round` in `swarm_config.json` or from the dashboard. A trader with a larger budget can increase this to give more agents full LLM reasoning, improving swarm intelligence at the cost of higher token expenditure.
+
+| Setting | Behavior |
+|---|---|
+| `"auto"` (default) | Tiered by swarm size — efficient defaults that keep costs predictable |
+| `"all"` | Every agent gets a full LLM call every round (maximum quality, maximum cost) |
+| `10`, `50`, `500`, etc. | Exact number of LLM-driven agents per round — you control the budget |
+
+**Auto mode defaults:**
+
+| Swarm Size | LLM Calls/Round (auto) | Behavior | Est. Cost/Cycle |
 |---|---|---|---|
-| 5-20 | 5-20 | Full LLM per agent. Every agent generates novel analysis. | $0.75-$3.00 |
-| 21-100 | ~20-30 | Top 20% use LLM ("leaders"), rest are rule-based. | $1.50-$4.50 |
-| 101-1,000 | ~10-15 | One LLM call per archetype representative. | $0.75-$2.25 |
-| 1,001-10,000 | ~10-15 | Same as above, statistical distribution to population. | $0.75-$2.25 |
+| 5-20 | 5-20 (all agents) | Full LLM per agent | $0.75-$3.00 |
+| 21-100 | ~20-30 | Top agents by reputation use LLM, rest are rule-based | $1.50-$4.50 |
+| 101-10,000 | ~10-15 | 1 per archetype + top reputation agents | $0.75-$2.25 |
+
+**Example: A trader running 1,000 agents with `llm_calls_per_round: 200`** would have 200 agents generating novel LLM-driven theses every round while 800 agents amplify, react, and build consensus through rule-based behavior. This produces richer debates than auto mode (~15 calls) at roughly 13x the cost per round.
 
 Cost estimates assume ~$0.003 per LLM call (varies by provider and model).
 

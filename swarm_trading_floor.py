@@ -32,6 +32,7 @@ from swarm_config import (
     load_swarm_config,
     get_anti_convergence_params,
     get_swarm_size,
+    get_llm_calls_per_round,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -478,27 +479,45 @@ class TradingFloor:
         conn.close()
 
     def _select_leaders(self, personas: list, swarm_size: int) -> set:
-        """Select which agents get LLM calls based on swarm size tier."""
-        if swarm_size <= 20:
+        """
+        Select which agents get LLM calls.
+
+        The number is controlled by llm_calls_per_round in swarm_config.json:
+        - "auto": tiered by swarm size (efficient defaults)
+        - "all": every agent gets LLM (max quality, max cost)
+        - integer: exact count (trader controls their budget)
+
+        Leaders are chosen by: 1 per archetype first (ensure diversity),
+        then fill remaining slots by reputation score.
+        """
+        n_leaders = get_llm_calls_per_round(swarm_size)
+
+        if n_leaders >= swarm_size:
             return {p["agent_id"] for p in personas}
-        elif swarm_size <= 100:
-            # Top 20% by reputation
-            sorted_p = sorted(personas, key=lambda x: x.get("reputation_score", 0.5), reverse=True)
-            n_leaders = max(10, swarm_size // 5)
-            return {p["agent_id"] for p in sorted_p[:n_leaders]}
-        else:
-            # One representative per archetype
-            leaders = set()
-            by_arch = {}
-            for p in personas:
-                arch = p["archetype"]
-                if arch not in by_arch:
-                    by_arch[arch] = []
-                by_arch[arch].append(p)
-            for arch, agents in by_arch.items():
-                best = max(agents, key=lambda x: x.get("reputation_score", 0.5))
-                leaders.add(best["agent_id"])
-            return leaders
+
+        # Phase 1: Guarantee at least one leader per archetype
+        leaders = set()
+        by_arch = {}
+        for p in personas:
+            arch = p["archetype"]
+            if arch not in by_arch:
+                by_arch[arch] = []
+            by_arch[arch].append(p)
+
+        for arch, agents in by_arch.items():
+            best = max(agents, key=lambda x: x.get("reputation_score", 0.5))
+            leaders.add(best["agent_id"])
+
+        # Phase 2: Fill remaining slots with highest-reputation agents
+        if len(leaders) < n_leaders:
+            remaining = [p for p in personas if p["agent_id"] not in leaders]
+            remaining.sort(key=lambda x: x.get("reputation_score", 0.5), reverse=True)
+            for p in remaining:
+                if len(leaders) >= n_leaders:
+                    break
+                leaders.add(p["agent_id"])
+
+        return leaders
 
     async def run_round(self, market_context: dict) -> dict:
         """

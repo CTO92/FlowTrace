@@ -37,6 +37,7 @@ def _defaults() -> dict:
         "simulation_speed": "normal",
         "round_interval_seconds": 30,
         "max_rounds_per_cycle": 50,
+        "llm_calls_per_round": "auto",  # "auto" = tiered by swarm size, or an int (e.g. 50, 500, "all")
         "archetypes": {
             "value_investor":   {"weight": 0.15, "description": "Focuses on fundamentals, P/E, book value, margin of safety", "bias": "conservative", "time_horizon_preference": [3, 4, 5], "indicators": ["P/E", "P/B", "FCF", "debt_ratio"]},
             "momentum_trader":  {"weight": 0.15, "description": "Follows price trends, breakouts, volume surges", "bias": "trend_following", "time_horizon_preference": [1, 2, 3], "indicators": ["RSI", "MACD", "volume", "moving_averages"]},
@@ -195,6 +196,44 @@ def get_simulation_params() -> dict:
         "max_rounds_per_cycle": config.get("max_rounds_per_cycle", 50),
         "simulation_speed": config.get("simulation_speed", "normal"),
     }
+
+
+def get_llm_calls_per_round(swarm_size: int = None) -> int:
+    """
+    Return the number of LLM-driven agents per simulation round.
+
+    Configurable via llm_calls_per_round in swarm_config.json:
+      - "auto" (default): Tiered by swarm size (efficient defaults)
+      - "all": Every agent gets an LLM call (maximum quality, maximum cost)
+      - integer (e.g. 50): Exact number of LLM-driven agents per round
+
+    A larger budget trader can increase this to improve swarm intelligence
+    at the cost of higher token expenditure.
+    """
+    if swarm_size is None:
+        swarm_size = get_swarm_size()
+
+    config = load_swarm_config()
+    setting = config.get("llm_calls_per_round", "auto")
+
+    if setting == "all":
+        return swarm_size
+
+    if isinstance(setting, int) and setting > 0:
+        return min(setting, swarm_size)
+
+    if isinstance(setting, str) and setting.isdigit():
+        return min(int(setting), swarm_size)
+
+    # "auto" — tiered strategy
+    if swarm_size <= 20:
+        return swarm_size
+    elif swarm_size <= 100:
+        return max(10, swarm_size // 5)
+    else:
+        # 1 per archetype + a few extra high-reputation agents
+        n_archetypes = len(config.get("archetypes", {}))
+        return max(n_archetypes, 15)
 
 
 def get_performance_tracking_params() -> dict:

@@ -1361,6 +1361,27 @@ else:
             save_swarm_config(swarm_cfg)
             st.info(f"Swarm size set to {new_size}. Will take effect on next persona generation.")
 
+        # LLM calls per round
+        st.markdown("#### LLM Budget per Round")
+        st.caption(
+            "Controls how many agents get full LLM reasoning per simulation round. "
+            "More LLM calls = better swarm intelligence, but higher API costs. "
+            '"Auto" uses efficient defaults. "All" gives every agent an LLM call.'
+        )
+        current_llm = swarm_cfg.get("llm_calls_per_round", "auto")
+        llm_options = ["auto", "all", "10", "25", "50", "100", "250", "500", "1000"]
+        current_display = str(current_llm) if str(current_llm) in llm_options else "auto"
+        new_llm = st.selectbox(
+            "LLM calls per round",
+            options=llm_options,
+            index=llm_options.index(current_display) if current_display in llm_options else 0,
+            help="auto = tiered by swarm size | all = every agent | number = exact count",
+        )
+        if new_llm != str(current_llm):
+            swarm_cfg["llm_calls_per_round"] = new_llm if new_llm in ("auto", "all") else int(new_llm)
+            save_swarm_config(swarm_cfg)
+            st.success(f"LLM budget set to **{new_llm}** calls per round.")
+
         st.markdown("---")
 
         # --- Archetype Distribution ---
