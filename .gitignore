@@ -47,3 +47,5 @@ learningAgents.md
 swarm_personas.json
 swarm_config.json
 agent_performance.log
+trader_profile.json
+reports/

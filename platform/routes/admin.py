@@ -32,9 +32,9 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 async def get_db():
     """Async database session dependency."""
-    from platform.database import async_session_factory
+    from platform.database import async_session
 
-    async with async_session_factory() as session:
+    async with async_session() as session:
         yield session
 
 

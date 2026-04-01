@@ -1,10 +1,12 @@
 import os
+import json
 import sqlite3
 import asyncio
 import requests
 import datetime
 import glob
 import feedparser
+import yfinance as yf
 from sec_edgar_downloader import Downloader
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain_core.tools import tool
@@ -466,3 +468,214 @@ def compare_peers(ticker: str):
             
     table = f"| {' | '.join(headers)} |\n|---|---|---|---|---|\n" + "\n".join(rows)
     return f"Peer Comparison Table:\n{table}"
+
+
+@tool("get_comprehensive_fundamentals")
+def get_comprehensive_fundamentals(ticker: str):
+    """
+    Fetch comprehensive fundamental data for a ticker using yfinance.
+    Returns valuation, profitability, growth, financial health, dividend,
+    and per-share metrics as a structured JSON string.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+
+        if not info or info.get("trailingPegRatio") is None and info.get("marketCap") is None:
+            # Minimal check that we got real data
+            pass
+
+        def _get(key):
+            """Extract a value from info, returning None if missing."""
+            return info.get(key)
+
+        data = {
+            "company_name": _get("longName"),
+            "sector": _get("sector"),
+            "industry": _get("industry"),
+            "valuation": {
+                "marketCap": _get("marketCap"),
+                "enterpriseValue": _get("enterpriseValue"),
+                "trailingPE": _get("trailingPE"),
+                "forwardPE": _get("forwardPE"),
+                "pegRatio": _get("pegRatio"),
+                "priceToBook": _get("priceToBook"),
+                "priceToSalesTrailing12Months": _get("priceToSalesTrailing12Months"),
+                "enterpriseToRevenue": _get("enterpriseToRevenue"),
+                "enterpriseToEbitda": _get("enterpriseToEbitda"),
+            },
+            "profitability": {
+                "profitMargins": _get("profitMargins"),
+                "operatingMargins": _get("operatingMargins"),
+                "grossMargins": _get("grossMargins"),
+                "returnOnEquity": _get("returnOnEquity"),
+                "returnOnAssets": _get("returnOnAssets"),
+            },
+            "growth": {
+                "revenueGrowth": _get("revenueGrowth"),
+                "earningsGrowth": _get("earningsGrowth"),
+                "earningsQuarterlyGrowth": _get("earningsQuarterlyGrowth"),
+            },
+            "financial_health": {
+                "debtToEquity": _get("debtToEquity"),
+                "currentRatio": _get("currentRatio"),
+                "quickRatio": _get("quickRatio"),
+                "totalCash": _get("totalCash"),
+                "totalDebt": _get("totalDebt"),
+                "freeCashflow": _get("freeCashflow"),
+                "operatingCashflow": _get("operatingCashflow"),
+            },
+            "dividends": {
+                "dividendYield": _get("dividendYield"),
+                "dividendRate": _get("dividendRate"),
+                "payoutRatio": _get("payoutRatio"),
+                "fiveYearAvgDividendYield": _get("fiveYearAvgDividendYield"),
+            },
+            "per_share": {
+                "bookValue": _get("bookValue"),
+                "revenuePerShare": _get("revenuePerShare"),
+                "trailingEps": _get("trailingEps"),
+                "forwardEps": _get("forwardEps"),
+            },
+        }
+
+        return json.dumps(data, indent=2, default=str)
+
+    except Exception as e:
+        return f"Error fetching comprehensive fundamentals for {ticker}: {str(e)}"
+
+
+@tool("get_financial_statements")
+def get_financial_statements(ticker: str):
+    """
+    Fetch the last 4 quarters of income statement, balance sheet, and cash flow
+    data for a ticker using yfinance. Returns a formatted readable string with
+    quarterly columns.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+
+        def _format_statement(title, df, row_keys):
+            """Format a DataFrame into a readable quarterly table."""
+            if df is None or df.empty:
+                return f"\n{title}:\n  No data available.\n"
+
+            # Limit to 4 most recent quarters (columns)
+            df = df.iloc[:, :4]
+
+            # Build header with quarter labels
+            col_labels = [col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col) for col in df.columns]
+            header = f"{'Metric':<35}" + "".join(f"{lbl:>18}" for lbl in col_labels)
+
+            lines = [f"\n{title}:", header, "-" * len(header)]
+
+            for key in row_keys:
+                if key in df.index:
+                    row = df.loc[key]
+                    values = []
+                    for val in row:
+                        if val is None or (hasattr(val, "__class__") and val.__class__.__name__ == "NaTType"):
+                            values.append(f"{'N/A':>18}")
+                        else:
+                            try:
+                                values.append(f"{float(val):>18,.0f}")
+                            except (ValueError, TypeError):
+                                values.append(f"{str(val):>18}")
+                    lines.append(f"{key:<35}" + "".join(values))
+                else:
+                    lines.append(f"{key:<35}" + "".join(f"{'N/A':>18}" for _ in col_labels))
+
+            return "\n".join(lines) + "\n"
+
+        income_keys = ["Total Revenue", "Gross Profit", "Operating Income", "Net Income"]
+        balance_keys = ["Total Assets", "Total Liabilities Net Minority Interest",
+                        "Stockholders Equity", "Total Debt", "Cash And Cash Equivalents"]
+        cashflow_keys = ["Operating Cash Flow", "Free Cash Flow", "Capital Expenditure"]
+
+        result = f"Financial Statements for {ticker} (Last 4 Quarters):\n"
+        result += _format_statement("Income Statement", stock.quarterly_income_stmt, income_keys)
+        result += _format_statement("Balance Sheet", stock.quarterly_balance_sheet, balance_keys)
+        result += _format_statement("Cash Flow", stock.quarterly_cashflow, cashflow_keys)
+
+        return result
+
+    except Exception as e:
+        return f"Error fetching financial statements for {ticker}: {str(e)}"
+
+
+@tool("get_earnings_history")
+def get_earnings_history(ticker: str):
+    """
+    Fetch the last 4 quarters of earnings history (actual vs estimated EPS and
+    surprise percentage) for a ticker using yfinance. Returns a formatted string.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+
+        # Try earnings_dates first (contains EPS estimate and actual)
+        try:
+            ed = stock.earnings_dates
+            if ed is not None and not ed.empty:
+                # Filter to rows that have both Reported EPS and EPS Estimate
+                cols_available = ed.columns.tolist()
+                has_reported = "Reported EPS" in cols_available
+                has_estimate = "EPS Estimate" in cols_available
+
+                if has_reported and has_estimate:
+                    # Drop rows where Reported EPS is NaN (future dates)
+                    filtered = ed.dropna(subset=["Reported EPS"]).head(4)
+
+                    if not filtered.empty:
+                        lines = [f"Earnings History for {ticker} (Last {len(filtered)} Quarters):\n"]
+                        lines.append(f"{'Date':<22}{'EPS Estimate':>14}{'Reported EPS':>14}{'Surprise':>12}{'Surprise %':>12}")
+                        lines.append("-" * 74)
+
+                        for idx, row in filtered.iterrows():
+                            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                            estimate = row.get("EPS Estimate")
+                            reported = row.get("Reported EPS")
+
+                            est_str = f"{estimate:.2f}" if estimate is not None and not (isinstance(estimate, float) and str(estimate) == "nan") else "N/A"
+                            rep_str = f"{reported:.2f}" if reported is not None and not (isinstance(reported, float) and str(reported) == "nan") else "N/A"
+
+                            # Calculate surprise
+                            if (estimate is not None and reported is not None
+                                    and not (isinstance(estimate, float) and str(estimate) == "nan")
+                                    and not (isinstance(reported, float) and str(reported) == "nan")):
+                                surprise = reported - estimate
+                                surprise_pct = (surprise / abs(estimate) * 100) if estimate != 0 else 0.0
+                                surp_str = f"{surprise:+.2f}"
+                                pct_str = f"{surprise_pct:+.1f}%"
+                            else:
+                                surp_str = "N/A"
+                                pct_str = "N/A"
+
+                            lines.append(f"{date_str:<22}{est_str:>14}{rep_str:>14}{surp_str:>12}{pct_str:>12}")
+
+                        return "\n".join(lines)
+        except Exception:
+            pass  # Fall through to alternative method
+
+        # Fallback: construct from quarterly income statement EPS
+        try:
+            inc = stock.quarterly_income_stmt
+            if inc is not None and not inc.empty and "Basic EPS" in inc.index:
+                eps_row = inc.loc["Basic EPS"].iloc[:4]
+                lines = [f"Earnings History for {ticker} (from quarterly income statement):\n"]
+                lines.append(f"{'Quarter Ending':<22}{'Basic EPS':>14}")
+                lines.append("-" * 36)
+
+                for col, val in eps_row.items():
+                    date_str = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)
+                    val_str = f"{float(val):.2f}" if val is not None else "N/A"
+                    lines.append(f"{date_str:<22}{val_str:>14}")
+
+                lines.append("\nNote: Estimate and surprise data not available; showing reported EPS only.")
+                return "\n".join(lines)
+        except Exception:
+            pass
+
+        return f"No earnings history data available for {ticker}."
+
+    except Exception as e:
+        return f"Error fetching earnings history for {ticker}: {str(e)}"

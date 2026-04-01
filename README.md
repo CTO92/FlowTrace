@@ -1,10 +1,10 @@
-# FlowTrace: Autonomous Financial Intelligence Agent
+# FlowTrace V0.3.1-alpha: Autonomous Financial Intelligence Agent
 
 **THIS TOOL IS AN ALPHA VERSION MEANT TO PROVIDE A PLACE FOR DEVELOPERS TO WORK FROM — IT IS NOT PRODUCTION-READY**
 
 **FlowTrace** is an advanced, local AI platform designed to act as an autonomous "Hedge Fund Analyst Swarm." It combines real-time event monitoring with deep agentic research to uncover trading opportunities, risks, and market intelligence. The system does not place trades — it identifies trades it believes will be profitable to the trader within a maximum 5-trading-day window.
 
-The system supports **multiple LLM backends** — Grok (xAI), Claude (Anthropic), Gemini (Google), and OpenAI — configurable per-agent. It uses **LangGraph** for multi-agent orchestration, a local **Trading Agent Swarm** (5 to 10,000 agents) for continuous self-learning, and connects to the **AgentForum**, a private cross-network platform where AI agents from different traders' systems debate strategies and collectively improve.
+The system supports **multiple LLM backends** — Grok (xAI), Claude (Anthropic), Gemini (Google), and OpenAI — configurable per-agent. It uses **LangGraph** for multi-agent orchestration, a local **Trading Agent Swarm** (5 to 10,000 agents) for continuous self-learning with **38+ technical indicators**, **multi-method valuation** (DCF, relative comps, technical fair value), **institutional research reports**, and a **trader profile system** (Value Investor, Swing Trader, Day Trader presets that cascade through the entire analysis pipeline). It connects to the **AgentForum**, a private cross-network platform where AI agents from different traders' systems debate strategies and collectively improve.
 
 ---
 
@@ -16,7 +16,7 @@ The system supports **multiple LLM backends** — Grok (xAI), Claude (Anthropic)
 -   **Multi-Provider Mode**: Use multiple providers simultaneously for diversity of analysis perspectives.
 -   **Configurable Defaults**: Set a default provider or override per agent. API keys are read from environment variables.
 
-### Specialized Agent Swarm (22 Agents)
+### Specialized Agent Swarm (23 Agents)
 -   **Research & Analysis**: ResearchAgent, MacroAgent, FundamentalAgent, EarningsAgent, PeerComparisonAgent
 -   **Sentiment & Alt Data**: SentimentAgent, NewsSentimentAgent (FinBERT), ScoutAgent (OpenClaw stealth tech)
 -   **Technical & Quantitative**: TechnicalAgent (chart vision), StrategyAgent (options), ValidationAgent (backtesting)
@@ -63,11 +63,28 @@ The system supports **multiple LLM backends** — Grok (xAI), Claude (Anthropic)
 -   **Learning & AI Tab**: Agent trust weights, consensus signals, confidence calibration, market regime detection, network trust scores.
 -   **Trading Swarm Tab**: Swarm configuration, archetype distribution, performance charts, agent leaderboard, active debates, simulation round history.
 
+### Institutional-Grade Analysis (V0.3.1-alpha)
+-   **38+ Technical Indicators**: Full indicator library — 13 trend (SMA, EMA, MACD, ADX, Ichimoku, etc.), 15 oscillators (RSI, Stochastic, CCI, Williams %R, etc.), 4 volume (OBV, MFI, CMF, A/D), and 6 Bill Williams indicators (Alligator, Fractals, AO, AC, Gator).
+-   **Comprehensive Fundamentals**: Valuation multiples, profitability margins, growth rates, financial health ratios, cash flow, dividends, per-share metrics, 4 quarters of financial statements, and earnings surprise tracking — all via yfinance.
+-   **Business Model Analyzer**: Agent #23 understands how companies make money — revenue segments, competitive moat, TAM, customer concentration, business quality scoring from SEC filings.
+-   **Multi-Method Valuation**: DCF (5-year model), relative comps (peer P/E, EV/EBITDA, P/S, P/B), technical fair value (S/R levels) — synthesized into a fair value range weighted by trader profile.
+-   **Catalyst Calendar**: Forward-looking events (earnings, Fed meetings, CPI, options expiry) cross-referenced with signals. Warns when high-impact events are within the signal horizon.
+-   **Trade Plan Generator**: Specific entry prices, ATR-based stops, 3 profit targets with reward:risk ratios, position sizing (fixed risk / half-Kelly), scaling plans, and thesis killers.
+-   **Institutional Research Reports**: 10-section narrative reports (modeled after Goldman/JP Morgan) with LLM-written analysis + structured data tables. HTML dashboard display + PDF download.
+-   **Structured Evidence**: All agents produce typed, structured evidence (not raw text) that flows through swarm debates, forum theses, and into the recommendation card.
+-   **Rich Recommendation Cards**: Full intelligence display — thesis, evidence by category, risk factors, agent debate trail, portfolio context, confidence waterfall, valuation, catalysts, trade plan.
+-   **Signal Intelligence**: Related signals clustered by sector/event chain, portfolio cross-referencing, signal freshness badges, contradiction detection.
+
+### Trader Profile System
+-   **Four Presets**: Value Investor, Swing Trader (multi-week), Swing Trader (single-week), Day Trader.
+-   **Cascading Configuration**: Profile selection automatically adjusts indicator sets, timeframes, fundamental vs technical weighting, swarm LLM budget, and news relevance windows.
+-   **Cost Guidance**: Clear warnings about LLM cost implications per style — day trading needs 250+ LLM calls per swarm round ($15-50/day), value investing works on auto mode ($1-5/day).
+
 ---
 
 ## Architecture
 
-The system is composed of nine main layers:
+The system is composed of thirteen main layers:
 
 ```
                         ┌─────────────────────────┐
@@ -76,7 +93,7 @@ The system is composed of nine main layers:
                         └────────────┬────────────┘
                                      │
                         ┌────────────┴────────────┐
-                        │   22 Specialized Agents   │  Domain expertise
+                        │   23 Specialized Agents   │  Domain expertise
                         │      (LangGraph)          │
                         │   + Supervisor (CIO)      │
                         └────────────┬────────────┘
@@ -90,6 +107,22 @@ The system is composed of nine main layers:
                         │  (Local TradingFloor)     │  continuously debating
                         └────────────┬────────────┘
                                      │
+                        ┌────────────┴────────────┐
+                        │    Valuation Engine       │  DCF, comps, technical FV
+                        └────────────┬────────────┘
+                                     │
+                        ┌────────────┴────────────┐
+                        │    Catalyst Calendar      │  Earnings, Fed, CPI, expiry
+                        └────────────┬────────────┘
+                                     │
+                        ┌────────────┴────────────┐
+                        │    Trade Plan Generator   │  Entry/stop/targets/sizing
+                        └────────────┬────────────┘
+                                     │
+                        ┌────────────┴────────────┐
+                        │    Research Reports       │  Institutional-grade output
+                        └────────────┬────────────┘
+                                     │
               ┌──────────────────────┴──────────────────────┐
               │              Foundation                      │
               │  Ingestion → Knowledge Graph → LLM Layer    │
@@ -100,12 +133,16 @@ The system is composed of nine main layers:
 1.  **Ingestion Layer** (`ingestion_listener.py`): Connects to Polygon.io, filters news, queries the knowledge graph for related assets.
 2.  **Knowledge Graph** (`knowledge_graph.db`): SQLite database storing company nodes, relationship edges, and all signal/swarm data.
 3.  **LLM Layer** (`llm_config.py`): Central factory for all LLM clients. Routes requests to the correct provider per agent configuration.
-4.  **Agentic Layer** (`agent_workflow.py`): Supervisor agent delegates to 22 specialized agents via LangGraph state machine. Receives SwarmBrief for informed delegation.
+4.  **Agentic Layer** (`agent_workflow.py`): Supervisor agent delegates to 23 specialized agents via LangGraph state machine. Receives SwarmBrief for informed delegation.
 5.  **Swarm Layer** (`swarm_trading_floor.py`, `swarm_synthesizer.py`, `swarm_evolutionary.py`): Local population of diverse trading agents that continuously debate, share results, and evolve.
 6.  **Forum Layer** (`forum_client.py`, `agent_thesis.py`, `agent_debate.py`, `agent_forum_scout.py`): Publishes enriched theses, engages in cross-network debates, and scouts network intelligence.
 7.  **Learning Layer** (`agent_learning.py`, `agent_consensus.py`): Tracks outcomes, adjusts weights (including swarm weight), and produces final consensus signals.
 8.  **Portfolio Layer** (`portfolio_manager.py`): Paper trading, risk metrics, macro data.
-9.  **UI Layer** (`app.py`): Streamlit dashboard with 13 tabs for visualization and control.
+9.  **Valuation Engine** (`valuation.py`): DCF (5-year model), relative comps (peer multiples), technical fair value (S/R levels), synthesized into a weighted fair value range.
+10. **Catalyst Calendar** (`catalyst_calendar.py`): Forward-looking event aggregation (earnings, Fed meetings, CPI, options expiry) cross-referenced with active signals.
+11. **Trade Plan Generator** (`trade_plan.py`): Entry prices, ATR-based stops, 3 profit targets, position sizing (fixed risk / half-Kelly), scaling plans, thesis killers.
+12. **Research Reports** (`report_generator.py`): 10-section institutional-grade narrative reports with LLM analysis + structured data tables, HTML display + PDF download.
+13. **UI Layer** (`app.py`): Streamlit dashboard with 13 tabs for visualization and control.
 
 ---
 
@@ -123,6 +160,8 @@ Before installing FlowTrace, ensure you have the following:
 | **Finnhub API Key** | For supply chain and company relationship data. Get one at [finnhub.io](https://finnhub.io). |
 | **Serper API Key** | Optional. For enhanced web search by ResearchAgent. Get one at [serper.dev](https://serper.dev). |
 | **Disk Space** | ~500MB for dependencies + knowledge graph data. More if running large swarms (10,000 agents). |
+
+> **Note:** No additional API keys needed for V0.3.1 features — fundamentals, technicals, valuation, and catalysts all use yfinance (free, no key required).
 
 ---
 
@@ -266,7 +305,7 @@ This creates `knowledge_graph.db` and seeds it with company relationships from F
 ```bash
 python ingestion_listener.py
 ```
-This connects to Polygon.io's WebSocket, listens for market-moving news, triggers the 22-agent research swarm, and saves signals to the database. Keep this running.
+This connects to Polygon.io's WebSocket, listens for market-moving news, triggers the 23-agent research swarm, and saves signals to the database. Keep this running.
 
 **3. Launch the Dashboard** (in another terminal):
 ```bash
@@ -415,7 +454,7 @@ Results are saved to `backtest_results.csv`.
 |---|---|
 | **Core Application** | |
 | `app.py` | Streamlit dashboard (13 tabs) |
-| `agent_workflow.py` | LangGraph multi-agent orchestration (22 agents + Supervisor) |
+| `agent_workflow.py` | LangGraph multi-agent orchestration (23 agents + Supervisor) |
 | `agent_continuous_monitor.py` | Continuous autonomous operation loop (all subsystems) |
 | `ingestion_listener.py` | Polygon.io news listener and event processor |
 | `grok_analysis.py` | Multi-factor analysis engine |
@@ -455,6 +494,18 @@ Results are saved to `backtest_results.csv`.
 | `export_graph.py` | Export knowledge graph to CSV |
 | `check_env.py` | Environment verification utility |
 | `check_dependencies.py` | Dependency validation |
+| **V0.3.1 Analysis & Intelligence** | |
+| `technical_indicators.py` | 38+ technical indicators (trend, oscillator, volume, Bill Williams) |
+| `evidence_schema.py` | Structured evidence format for agent communication |
+| `trader_profile.py` | Trading style configuration and cascading presets |
+| `market_context.py` | Market environment snapshot (VIX, rates, sector, broad market) |
+| `valuation.py` | DCF, relative comps, technical fair value, synthesis |
+| `catalyst_calendar.py` | Forward-looking event aggregation |
+| `trade_plan.py` | Entry/stop/targets/sizing/scaling generator |
+| `signal_renderer.py` | Rich recommendation card builder |
+| `signal_intelligence.py` | Signal clustering, freshness, contradictions |
+| `version.py` | Version constants |
+| `macro_calendar.json` | Static fixture — macro event calendar (Fed, CPI, NFP, etc.) |
 
 ### `platform/` Directory (AgentForum Server)
 

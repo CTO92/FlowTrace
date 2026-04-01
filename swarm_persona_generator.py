@@ -202,6 +202,21 @@ async def generate_personas(swarm_size: int, archetypes: dict = None) -> list:
         philosophies[name] = await _generate_archetype_philosophy(name, arch_config)
         logger.debug(f"  {name}: {philosophies[name][:60]}...")
 
+    # Step 1.5: Adjust archetype weights based on trader profile
+    try:
+        from trader_profile import get_swarm_archetype_weight_adjustments
+        adjustments = get_swarm_archetype_weight_adjustments()
+        for arch_name, multiplier in adjustments.items():
+            if arch_name in archetypes:
+                archetypes[arch_name] = dict(archetypes[arch_name])
+                archetypes[arch_name]["weight"] = archetypes[arch_name].get("weight", 0.1) * multiplier
+        # Renormalize weights
+        total = sum(a["weight"] for a in archetypes.values())
+        for a in archetypes.values():
+            a["weight"] = a["weight"] / total
+    except ImportError:
+        pass
+
     # Step 2: Distribute agents across archetypes
     distribution = get_archetype_distribution(swarm_size)
     logger.info(f"Archetype distribution for {swarm_size} agents: {distribution}")

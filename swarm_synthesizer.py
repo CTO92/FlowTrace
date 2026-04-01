@@ -394,7 +394,7 @@ def _build_consensus_signals(ticker_data: dict, rounds_analyzed: int, agent_coun
             "source": "trading_agent_swarm",
             "ticker": ticker,
             "direction": dominant,
-            "confidence": round(avg_conf * 100, 1),
+            "confidence": round(avg_conf * 100, 1),  # 0-100 scale to match signals table convention
             "expected_move_pct": expected_move,
             "time_horizon_days": 3,
             "consensus_strength": round(strength, 3),

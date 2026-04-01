@@ -43,7 +43,7 @@ def _get_db():
 
 
 def _ensure_consensus_table(conn):
-    """Create the consensus_signals table if it doesn't exist."""
+    """Create the consensus_signals table if it doesn't exist, and add expanded columns."""
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS consensus_signals (
@@ -67,6 +67,25 @@ def _ensure_consensus_table(conn):
             outcome TEXT
         )
     """)
+    # Expanded columns (V0.3.1-alpha)
+    new_columns = [
+        ("risk_factors", "TEXT"),
+        ("sector", "TEXT"),
+        ("market_regime", "TEXT"),
+        ("market_snapshot", "TEXT"),
+        ("evidence_summary", "TEXT"),
+        ("debate_summary", "TEXT"),
+        ("portfolio_context", "TEXT"),
+        ("valuation_summary", "TEXT"),
+        ("trade_plan", "TEXT"),
+    ]
+    for col_name, col_type in new_columns:
+        # Note: DDL column names cannot be parameterized in SQLite.
+        # These values are hardcoded above (not from user input), so no injection risk.
+        try:
+            cursor.execute(f"ALTER TABLE consensus_signals ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
     conn.commit()
 
 
@@ -110,25 +129,57 @@ def calculate_consensus(
 
     # 1. Apply agent weights to raw confidence
     if contributing_agents:
-        total_weight = 0.0
+        weight_count = 0
         weighted_sum = 0.0
         for agent_type in contributing_agents:
             weight = get_agent_weight(agent_type)
             weighted_sum += weight
-            total_weight += 1.0
+            weight_count += 1
 
-        agent_multiplier = weighted_sum / max(1.0, total_weight)
+        agent_multiplier = weighted_sum / max(1, weight_count)
     else:
         agent_multiplier = 1.0
 
     # 2. Apply event type weight
     event_weight = config["event_type_weights"].get(event_type, 1.0)
 
-    # 3. Apply sector adjustment (if we can determine sector)
-    sector_multiplier = 1.0  # TODO: map ticker -> sector via knowledge graph
+    # 3. Apply sector adjustment using market context
+    sector_multiplier = 1.0
+    ctx = None
+    try:
+        from market_context import capture_market_context_sync, classify_regime
+        ctx = capture_market_context_sync(ticker)
 
-    # 4. Apply regime adjustment
-    regime_multiplier = 1.0  # TODO: determine current regime from VIX
+        if ctx:
+            sector_change = ctx.get("sector", {}).get("change_pct", 0) or 0
+            spy_change = ctx.get("indices", {}).get("SPY", {}).get("change_pct", 0) or 0
+            relative = sector_change - spy_change
+            # Sector outperforming market = tailwind for bullish signals
+            if direction == "BULLISH" and relative > 0.5:
+                sector_multiplier = 1.05
+            elif direction == "BULLISH" and relative < -0.5:
+                sector_multiplier = 0.92
+            elif direction == "BEARISH" and relative < -0.5:
+                sector_multiplier = 1.05
+            elif direction == "BEARISH" and relative > 0.5:
+                sector_multiplier = 0.92
+    except ImportError:
+        pass
+
+    # 4. Apply regime adjustment using VIX
+    regime_multiplier = 1.0
+    try:
+        if ctx:
+            vix_data = ctx.get("vix", {})
+            vix_level = vix_data.get("level") if isinstance(vix_data, dict) else vix_data
+            if vix_level and isinstance(vix_level, (int, float)):
+                regime = classify_regime(vix_level)
+                if regime == "low_vix":
+                    regime_multiplier = 1.05
+                elif regime == "high_vix":
+                    regime_multiplier = 0.85
+    except Exception:
+        pass
 
     # 5. Apply forum consensus adjustment
     forum_multiplier = 1.0
@@ -157,7 +208,14 @@ def calculate_consensus(
 
     # 6. Apply swarm consensus adjustment
     swarm_multiplier = 1.0
-    if swarm_consensus and swarm_consensus.get("ticker") == ticker:
+    if swarm_consensus:
+        # Ensure swarm_consensus is a dict (may arrive as JSON string from DB)
+        if isinstance(swarm_consensus, str):
+            try:
+                swarm_consensus = json.loads(swarm_consensus)
+            except (json.JSONDecodeError, TypeError):
+                swarm_consensus = None
+    if swarm_consensus and isinstance(swarm_consensus, dict) and swarm_consensus.get("ticker") == ticker:
         swarm_direction_match = (swarm_consensus.get("direction") == direction)
         swarm_strength = swarm_consensus.get("consensus_strength", 0.5)
         swarm_weight = get_agent_weight("swarm")
@@ -171,7 +229,38 @@ def calculate_consensus(
 
         swarm_multiplier = max(0.80, min(1.15, swarm_multiplier))
 
-    # 7. Calculate final adjusted confidence
+    # 7. Apply valuation multiplier
+    valuation_multiplier = 1.0
+    try:
+        from valuation import synthesize_valuation
+        val = synthesize_valuation(ticker)
+        if val and "error" not in val:
+            verdict = val.get("valuation_verdict", "fairly_valued")
+            if verdict == "undervalued" and direction == "BULLISH":
+                valuation_multiplier = 1.05
+            elif verdict == "overvalued" and direction == "BULLISH":
+                valuation_multiplier = 0.90
+            elif verdict == "overvalued" and direction == "BEARISH":
+                valuation_multiplier = 1.05
+            elif verdict == "undervalued" and direction == "BEARISH":
+                valuation_multiplier = 0.90
+    except ImportError:
+        pass
+
+    # 8. Apply catalyst multiplier
+    catalyst_multiplier = 1.0
+    try:
+        from catalyst_calendar import get_signal_context
+        cat_ctx = get_signal_context(ticker, time_horizon_days)
+        if cat_ctx:
+            if not cat_ctx.get("trading_window_clear", True):
+                catalyst_multiplier = 0.90  # Caution: high-impact event within horizon
+            if cat_ctx.get("earnings_imminent") and direction == "BULLISH":
+                catalyst_multiplier = max(catalyst_multiplier, 1.05)  # Earnings catalyst for bullish
+    except ImportError:
+        pass
+
+    # 9. Calculate final adjusted confidence
     raw_normalized = raw_confidence / 100.0  # normalize to 0-1
 
     adjusted = (
@@ -182,6 +271,8 @@ def calculate_consensus(
         * regime_multiplier
         * forum_multiplier
         * swarm_multiplier
+        * valuation_multiplier
+        * catalyst_multiplier
     )
 
     # Clamp to [0, 1]
@@ -213,6 +304,8 @@ def calculate_consensus(
             "regime_multiplier": round(regime_multiplier, 3),
             "forum_multiplier": round(forum_multiplier, 3),
             "swarm_multiplier": round(swarm_multiplier, 3),
+            "valuation_multiplier": round(valuation_multiplier, 3),
+            "catalyst_multiplier": round(catalyst_multiplier, 3),
         },
         "node_id": get_node_id(),
         "agent_id": _get_agent_id(),
@@ -245,13 +338,67 @@ def emit_signal(signal: dict) -> Optional[int]:
     _ensure_consensus_table(conn)
     cursor = conn.cursor()
 
+    # Generate trade plan for high-confidence signals (HIGH bug #8 fix)
+    if not signal.get("trade_plan"):
+        try:
+            from trade_plan import generate_trade_plan
+            plan = generate_trade_plan(
+                consensus_signal=signal,
+                trader_profile=None,  # Will load from disk
+            )
+            if plan and "error" not in plan:
+                signal["trade_plan"] = plan
+        except Exception as e:
+            logger.debug(f"Trade plan generation skipped: {e}")
+
+    # Populate evidence_summary if not already set (HIGH bug #9 fix)
+    # Aggregate from source signals' agent_data if available
+    if not signal.get("evidence_summary"):
+        try:
+            evidence_parts = []
+            for agent_type in signal.get("contributing_agents", []):
+                evidence_parts.append({
+                    "agent_type": agent_type,
+                    "direction_bias": signal["direction"],
+                    "confidence": signal["raw_confidence"] / 100.0,
+                })
+            if evidence_parts:
+                signal["evidence_summary"] = evidence_parts
+        except Exception:
+            pass
+
+    # Build expanded fields for V0.3.1-alpha
+    trade_plan_json = json.dumps(signal.get("trade_plan"), default=str) if signal.get("trade_plan") else None
+    risk_factors_json = json.dumps(signal.get("risk_factors")) if signal.get("risk_factors") else None
+    market_snapshot_json = json.dumps(signal.get("market_snapshot"), default=str) if signal.get("market_snapshot") else None
+    evidence_json = json.dumps(signal.get("evidence_summary"), default=str) if signal.get("evidence_summary") else None
+    debate_json = json.dumps(signal.get("debate_summary"), default=str) if signal.get("debate_summary") else None
+    portfolio_json = json.dumps(signal.get("portfolio_context"), default=str) if signal.get("portfolio_context") else None
+    valuation_json = json.dumps(signal.get("valuation_summary"), default=str) if signal.get("valuation_summary") else None
+
+    # Determine market regime
+    market_regime = None
+    try:
+        from market_context import capture_market_context_sync, classify_regime
+        ctx = capture_market_context_sync(signal["ticker"])
+        if ctx:
+            vix_data = ctx.get("vix", {})
+            vix_level = vix_data.get("level") if isinstance(vix_data, dict) else vix_data
+            if vix_level and isinstance(vix_level, (int, float)):
+                market_regime = classify_regime(vix_level)
+    except ImportError:
+        pass
+
     cursor.execute("""
         INSERT INTO consensus_signals (
             timestamp, ticker, direction, consensus_score,
             raw_confidence, adjusted_confidence, expected_move_pct,
             time_horizon_days, contributing_agents, event_type,
-            reasoning, source_signal_ids, node_id, agent_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reasoning, source_signal_ids, node_id, agent_id,
+            risk_factors, sector, market_regime, market_snapshot,
+            evidence_summary, debate_summary, portfolio_context, valuation_summary,
+            trade_plan
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         signal["timestamp"],
         signal["ticker"],
@@ -267,6 +414,15 @@ def emit_signal(signal: dict) -> Optional[int]:
         json.dumps(signal.get("source_signal_ids", [])),
         signal["node_id"],
         signal["agent_id"],
+        risk_factors_json,
+        signal.get("sector"),
+        market_regime,
+        market_snapshot_json,
+        evidence_json,
+        debate_json,
+        portfolio_json,
+        valuation_json,
+        trade_plan_json,
     ))
 
     signal_id = cursor.lastrowid
@@ -377,10 +533,23 @@ def process_raw_signals(raw_signals: list) -> list:
         reasoning_parts = [s.get("reasoning", "") for s in signals if s.get("reasoning")]
         combined_reasoning = " | ".join(reasoning_parts[:3])  # top 3
 
-        # Which agents contributed (from agent_data field)
-        contributing = list(set(
-            s.get("agent_name", "Unknown") for s in signals
-        ))
+        # Which agents contributed
+        contributing = set()
+        for s in signals:
+            # Try multiple possible field names
+            if s.get("contributing_agents"):
+                agents = s["contributing_agents"]
+                if isinstance(agents, list):
+                    contributing.update(agents)
+                elif isinstance(agents, str):
+                    contributing.add(agents)
+            elif s.get("agent_name"):
+                contributing.add(s["agent_name"])
+            elif s.get("source") == "trading_agent_swarm":
+                contributing.add("swarm_aggregate")
+            else:
+                contributing.add(f"AnalysisEngine_{s.get('event_type', 'Unknown')}")
+        contributing = list(contributing) if contributing else ["AnalysisEngine"]
 
         # Check if any signal carries swarm consensus data
         swarm_data = None

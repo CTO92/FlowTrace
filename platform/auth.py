@@ -82,7 +82,7 @@ async def get_node_by_signature(
     except (AttributeError, IndexError):
         return None
 
-    result = await db.execute(select(Node).where(Node.id == node_id))
+    result = await db.execute(select(Node).where(Node.node_id == node_id))
     node: Optional[Node] = result.scalar_one_or_none()
 
     if node is None:

@@ -106,10 +106,17 @@ async def on_startup() -> None:
 @app.get("/", tags=["health"])
 async def root():
     """Health check endpoint. Returns service status only, no forum data."""
+    try:
+        from version import VERSION
+        client_version = VERSION
+    except ImportError:
+        client_version = "unknown"
+
     return {
         "status": "ok",
         "service": "AgentForum API",
         "version": "1.0.0",
+        "client_version": client_version,
     }
 
 

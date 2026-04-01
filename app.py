@@ -31,10 +31,15 @@ from llm_config import (
     reload_config,
 )
 from swarm_config import load_swarm_config, save_swarm_config, is_swarm_enabled
+from version import VERSION
+from trader_profile import (
+    load_profile, save_profile, apply_preset, profile_exists,
+    get_trading_style, get_cost_warning, PRESETS, COST_WARNINGS,
+)
 
 # --- Configuration ---
 st.set_page_config(
-    page_title="FlowTrace",
+    page_title=f"FlowTrace V{VERSION}",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -170,6 +175,7 @@ def get_ticker_sectors(tickers):
 
 # --- Sidebar ---
 st.sidebar.title("⚡ FlowTrace")
+st.sidebar.caption(f"V{VERSION} | {get_trading_style().replace('_', ' ').title()}")
 
 # Load env for sidebar display
 env_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -339,24 +345,72 @@ else:
         if df_filtered.empty:
             st.warning("No signals match current filters.")
         else:
+            # Signal freshness classification
+            try:
+                from signal_intelligence import classify_freshness
+                freshness_available = True
+            except ImportError:
+                freshness_available = False
+
             for index, row in df_filtered.head(10).iterrows():
+                # Determine direction and colors
+                move = row.get('expected_move_pct', 0) or 0
+                direction = "BULLISH" if move > 0 else "BEARISH" if move < 0 else "NEUTRAL"
+                dir_color = "#00FF00" if direction == "BULLISH" else "#FF4444" if direction == "BEARISH" else "#AAAAAA"
+
+                # Signal freshness badge
+                freshness = ""
+                if freshness_available and row.get("timestamp"):
+                    try:
+                        freshness = classify_freshness(str(row["timestamp"]))
+                    except Exception:
+                        freshness = ""
+                freshness_badge = {"fresh": "🟢", "aging": "🟡", "stale": "⚪"}.get(freshness, "")
+
+                # Sector and regime from expanded columns (may be None for old signals)
+                sector = row.get("sector", "") or ""
+                regime = row.get("market_regime", "") or ""
+
                 with st.container():
                     st.markdown(f"""
-                    <div class="signal-card">
-                        <h3>{row['source_ticker']} ➔ {row['target_ticker']}</h3>
-                        <p><strong>Event:</strong> {row['event_type']} | <strong>Confidence:</strong> {row['confidence']}% | <strong>Score:</strong> {row['unified_score']}</p>
-                        <p><em>{row['summary']}</em></p>
+                    <div style="background-color:#1a1a2e;padding:16px;border-radius:10px;margin-bottom:12px;border-left:5px solid {dir_color};">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <h3 style="margin:0;">{freshness_badge} {direction}: {row['source_ticker']} → {row['target_ticker']}</h3>
+                            <span style="color:{dir_color};font-size:1.2em;font-weight:bold;">{row.get('confidence', 0):.0f}%</span>
+                        </div>
+                        <p style="margin:4px 0;color:#888;">
+                            Event: {row.get('event_type', 'Unknown')} | Expected: {move:+.1f}% |
+                            Score: {row.get('unified_score', 0):.2f}
+                            {f' | Sector: {sector}' if sector else ''}
+                            {f' | {regime.replace("_", " ").title()}' if regime else ''}
+                        </p>
+                        <p><em>{row.get('summary', '')}</em></p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    with st.expander(f"View Analysis Details for {row['target_ticker']}"):
+
+                    with st.expander(f"View Full Analysis for {row['target_ticker']}"):
                         c1, c2 = st.columns([2, 1])
                         with c1:
-                            st.markdown(f"**Reasoning:**\n{row['reasoning']}")
-                            st.markdown(f"**Expected Move:** {row['expected_move_pct']}%")
+                            st.markdown(f"**Reasoning:**\n{row.get('reasoning', 'N/A')}")
+                            st.markdown(f"**Expected Move:** {move:+.1f}%")
+
+                            # Risk factors (from expanded schema)
+                            risk_str = row.get("risk_factors", "")
+                            if risk_str:
+                                try:
+                                    risks = json.loads(risk_str) if isinstance(risk_str, str) else risk_str
+                                    if risks:
+                                        st.markdown("**Risk Factors:**")
+                                        for r in risks[:5]:
+                                            st.markdown(f"- {r}")
+                                except Exception:
+                                    pass
+
                         with c2:
-                            st.metric("Unified Score", row['unified_score'])
-                            st.metric("Confidence", f"{row['confidence']}%")
+                            st.metric("Unified Score", f"{row.get('unified_score', 0):.2f}")
+                            st.metric("Confidence", f"{row.get('confidence', 0):.0f}%")
+                            if sector:
+                                st.metric("Sector", sector)
                         
                         # Text-to-Speech for Summary
                         summary_text = str(row['summary'])
@@ -613,6 +667,69 @@ else:
 
     with tab7:
         st.subheader("Configuration")
+
+        # --- Trader Profile Section ---
+        st.markdown("### Trader Profile")
+        if not profile_exists():
+            st.warning("No trader profile configured. Select your trading style to optimize the system for your needs.")
+
+        current_profile = load_profile()
+        current_style = current_profile.get("trading_style", "swing_trader")
+        current_horizon = current_profile.get("swing_horizon", "multi_week")
+
+        # Map to preset key
+        style_options = {
+            "Value Investor": "value_investor",
+            "Swing Trader (Multi-Week)": "swing_multi_week",
+            "Swing Trader (Single Week)": "swing_single_week",
+            "Day Trader": "day_trader",
+        }
+        reverse_map = {v: k for k, v in style_options.items()}
+
+        # Determine current display
+        if current_style == "value_investor":
+            current_key = "value_investor"
+        elif current_style == "day_trader":
+            current_key = "day_trader"
+        elif current_horizon == "single_week":
+            current_key = "swing_single_week"
+        else:
+            current_key = "swing_multi_week"
+
+        current_display = reverse_map.get(current_key, "Swing Trader (Multi-Week)")
+
+        selected_style = st.radio(
+            "Trading Style",
+            options=list(style_options.keys()),
+            index=list(style_options.keys()).index(current_display),
+            horizontal=True,
+        )
+        selected_key = style_options[selected_style]
+
+        # Show cost warning
+        cost = COST_WARNINGS.get(selected_key, {})
+        if cost.get("level") == "high":
+            st.error(cost.get("message", ""))
+        elif cost.get("level") in ("medium", "low_medium"):
+            st.warning(cost.get("message", ""))
+        else:
+            st.success(cost.get("message", ""))
+
+        # Show preset details
+        preset = PRESETS.get(selected_key, {})
+        pc1, pc2, pc3 = st.columns(3)
+        pc1.metric("Fundamental Weight", f"{preset.get('fundamental_weight', 0.4):.0%}")
+        pc2.metric("Technical Weight", f"{preset.get('technical_weight', 0.6):.0%}")
+        pc3.metric("Swarm LLM Rec", str(preset.get("swarm_llm_recommendation", "auto")))
+
+        if selected_key != current_key:
+            if st.button("Apply Trading Profile"):
+                apply_preset(selected_key)
+                st.success(f"Profile set to **{selected_style}**. System will adapt on next cycle.")
+                st.rerun()
+
+        st.markdown("---")
+
         st.info("Note: Updates to API keys require a restart of the application/listener to take effect.")
         
         # Load current env vars to pre-fill

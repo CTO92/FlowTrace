@@ -365,12 +365,15 @@ class ContinuousMonitorAgent:
         and knowledge graph data.
         """
         import sqlite3
+        import pandas as pd
 
         kg_db = os.path.join(BASE_DIR, "knowledge_graph.db")
         context = {
             "active_tickers": [],
             "ticker_data": {},
             "ticker_sectors": {},
+            "fundamentals": {},
+            "technicals": {},
         }
 
         if not os.path.exists(kg_db):
@@ -426,8 +429,37 @@ class ContinuousMonitorAgent:
                 pass
 
             conn.close()
+
+            # Populate fundamentals and technicals for active tickers
+            for ticker in tickers[:10]:
+                try:
+                    import yfinance as yf
+                    info = yf.Ticker(ticker).info or {}
+                    context["fundamentals"][ticker] = {
+                        "trailing_pe": info.get("trailingPE"),
+                        "forward_pe": info.get("forwardPE"),
+                        "price_to_book": info.get("priceToBook"),
+                        "fcf_yield": (info.get("freeCashflow", 0) or 0) / max(info.get("marketCap", 1) or 1, 1),
+                        "gross_margin": info.get("grossMargins"),
+                        "debt_to_equity": info.get("debtToEquity"),
+                    }
+                    context["ticker_sectors"][ticker] = info.get("sector", "")
+                except Exception:
+                    pass
+
+                try:
+                    from technical_indicators import compute_all
+                    hist = yf.download(ticker, period="3mo", interval="1d", progress=False)
+                    if hist is not None and not hist.empty:
+                        if isinstance(hist.columns, pd.MultiIndex):
+                            hist.columns = hist.columns.get_level_values(0)
+                        indicators = compute_all(hist, ["RSI", "MACD", "SMA", "ADX"])
+                        context["technicals"][ticker] = indicators
+                except Exception:
+                    pass
+
         except Exception as e:
-            logger.debug(f"[Swarm] Market context build error: {e}")
+            logger.warning(f"[Swarm] Market context build error (swarm agents will operate with limited data): {e}")
 
         return context
 

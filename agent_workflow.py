@@ -14,8 +14,8 @@ from langgraph.graph import StateGraph, END
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from dotenv import load_dotenv
 
-from agent_tools import web_search, scrape_web_page, get_competitors, get_insider_trades, get_analyst_ratings, get_fundamental_ratios, get_earnings_calendar, get_short_interest, fetch_rss_feed, visualize_supply_chain, get_sec_filing_section, compare_peers
-from agent_tools_advanced import get_macro_rates, get_reddit_sentiment, get_portfolio_exposure, execute_trade, propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, validate_signal_robustness, calculate_atr_stop_loss, analyze_sentiment_bert, optimize_portfolio_mean_variance, analyze_sector_momentum, analyze_vix_term_structure, calculate_rolling_correlation, analyze_seasonality
+from agent_tools import web_search, scrape_web_page, get_competitors, get_insider_trades, get_analyst_ratings, get_fundamental_ratios, get_earnings_calendar, get_short_interest, fetch_rss_feed, visualize_supply_chain, get_sec_filing_section, compare_peers, get_comprehensive_fundamentals, get_financial_statements, get_earnings_history
+from agent_tools_advanced import get_macro_rates, get_reddit_sentiment, get_portfolio_exposure, execute_trade, propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, validate_signal_robustness, calculate_atr_stop_loss, analyze_sentiment_bert, optimize_portfolio_mean_variance, analyze_sector_momentum, analyze_vix_term_structure, calculate_rolling_correlation, analyze_seasonality, analyze_technicals
 from agent_tools_scout import get_web_traffic_metrics, get_app_store_rankings, get_job_market_trends, get_google_trends
 from agent_tools_technical import analyze_chart_pattern
 from node_identity import generate_agent_id, compute_persona_hash, get_node_id
@@ -168,8 +168,8 @@ async def execution_node(state):
 
 async def strategy_node(state):
     """Strategy Agent."""
-    system_prompt = "You are a Derivatives Strategist. Your job is to propose complex option structures (spreads, condors, etc.) that match the analysis outlook. You can also calculate the Greeks for specific options using calculate_option_greeks to assess risk. You can also calculate optimal entry prices based on technical support and suggest stop-loss levels using ATR."
-    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss], system_prompt, agent_type="StrategyAgent")
+    system_prompt = "You are a Derivatives Strategist. Your job is to propose complex option structures (spreads, condors, etc.) that match the analysis outlook. You can calculate Greeks, find optimal entries via technical support, set ATR-based stops, and run full technical analysis (RSI, Bollinger Bands, ADX, etc.) to inform strategy selection."
+    agent = create_agent([propose_option_strategy, calculate_option_greeks, calculate_optimal_entry, calculate_atr_stop_loss, analyze_technicals], system_prompt, agent_type="StrategyAgent")
     
     start_time = time.time()
     try:
@@ -195,9 +195,9 @@ async def scout_node(state):
         return {"messages": [AIMessage(content=f"ScoutAgent failed with error: {e}", name="ScoutAgent")]}
 
 async def technical_node(state):
-    """Technical Agent using Vision."""
-    system_prompt = "You are a Technical Analyst. You use a vision model to look at charts and identify patterns. Use the analyze_chart_pattern tool."
-    agent = create_agent([analyze_chart_pattern], system_prompt, agent_type="TechnicalAgent")
+    """Technical Agent using Vision and programmatic indicators."""
+    system_prompt = "You are a Technical Analyst. You have two complementary tools: (1) analyze_technicals for programmatic indicator readings (RSI, MACD, ADX, Bollinger, etc.) and (2) analyze_chart_pattern for visual chart pattern identification via AI vision. Use BOTH tools together: programmatic indicators give you precise numbers, while visual analysis catches patterns the numbers might miss."
+    agent = create_agent([analyze_technicals, analyze_chart_pattern], system_prompt, agent_type="TechnicalAgent")
     
     start_time = time.time()
     try:
@@ -287,8 +287,8 @@ async def seasonality_node(state):
 
 async def fundamental_node(state):
     """Fundamental Analysis Agent."""
-    system_prompt = "You are a Fundamental Analyst. You analyze company financial health using key ratios like P/E, PEG, ROE, and Debt-to-Equity. Use the get_fundamental_ratios tool."
-    agent = create_agent([get_fundamental_ratios], system_prompt, agent_type="FundamentalAgent")
+    system_prompt = "You are a Fundamental Analyst. You have access to comprehensive financial data: (1) get_comprehensive_fundamentals for valuation, profitability, growth, financial health, dividends, and per-share metrics, (2) get_financial_statements for quarterly income statement, balance sheet, and cash flow trends, (3) get_earnings_history for actual vs estimated EPS and surprise percentages. Analyze all three to build a complete financial picture."
+    agent = create_agent([get_comprehensive_fundamentals, get_financial_statements, get_earnings_history], system_prompt, agent_type="FundamentalAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="FundamentalAgent")]}
 
@@ -329,10 +329,39 @@ async def sec_filings_node(state):
 
 async def peer_comparison_node(state):
     """Peer Comparison Agent."""
-    system_prompt = "You are a Peer Comparison Analyst. You compare companies against their competitors to identify relative value. Use the compare_peers tool."
-    agent = create_agent([compare_peers], system_prompt, agent_type="PeerComparisonAgent")
+    system_prompt = "You are a Peer Comparison Analyst. You compare companies against their competitors to identify relative value. Use compare_peers for a quick comparison table, and get_comprehensive_fundamentals on the target and key peers for deeper valuation, profitability, and health analysis."
+    agent = create_agent([compare_peers, get_comprehensive_fundamentals], system_prompt, agent_type="PeerComparisonAgent")
     result = await agent.ainvoke({"messages": state["messages"]})
     return {"messages": [AIMessage(content=result["output"], name="PeerComparisonAgent")]}
+
+async def business_model_node(state):
+    """Business Model Analysis Agent."""
+    system_prompt = """You are a Business Model Analyst. Your job is to understand HOW a company makes money, not just its financial ratios. You analyze:
+1. Revenue model: segments, geographic mix, customer concentration, recurring vs one-time revenue
+2. Competitive position: moat type (switching costs, network effects, scale, brand), moat strength, market share trends
+3. Total addressable market: TAM size, growth rate, company's market share, expansion vectors
+4. Business quality: management alignment, capital allocation, competitive threats
+
+Use get_sec_filing_section to read the company's 10-K (Business section Item 1, Risk Factors Item 1A, MD&A Item 7).
+Use get_comprehensive_fundamentals for financial data and sector/industry classification.
+Use web_search for recent strategic announcements and competitive landscape.
+Use get_competitors to identify key rivals.
+
+Output a structured business model assessment with quality score (0-10)."""
+    agent = create_agent(
+        [get_sec_filing_section, get_comprehensive_fundamentals, web_search, get_competitors],
+        system_prompt, agent_type="BusinessModelAgent"
+    )
+
+    start_time = time.time()
+    try:
+        result = await agent.ainvoke({"messages": state["messages"]})
+        await log_agent_performance("BusinessModelAgent", start_time, True)
+        return {"messages": [AIMessage(content=result["output"], name="BusinessModelAgent")]}
+    except Exception as e:
+        await log_agent_performance("BusinessModelAgent", start_time, False, str(e))
+        return {"messages": [AIMessage(content=f"BusinessModelAgent failed with error: {e}", name="BusinessModelAgent")]}
+
 
 # --- Supervisor Node ---
 async def supervisor_node(state):
@@ -369,7 +398,8 @@ async def supervisor_node(state):
     20. SupplyChainVisualizerAgent: Generates Graphviz DOT code to visualize supply chain relationships.
     21. SECFilingsAgent: Searches and retrieves specific sections (like Risk Factors) from SEC filings.
     22. PeerComparisonAgent: Generates comparison tables for tickers vs competitors on key metrics.
-    
+    23. BusinessModelAgent: Analyzes how a company makes money -- revenue segments, competitive moat, TAM, customer concentration, business quality.
+
     **Execution Strategy:**
     1. **Plan**: Analyze the user's request. Break it down into specific questions.
     2. **Delegate**: Choose the best agent for the immediate next step. Provide clear, specific instructions.
@@ -390,8 +420,24 @@ async def supervisor_node(state):
     }
     """
     
-    # Inject SwarmBrief if available
+    # Inject trader profile context
     active_system_prompt = system_prompt
+    try:
+        from trader_profile import get_trading_style, get_fundamental_weight, get_technical_weight
+        style = get_trading_style()
+        fund_w = get_fundamental_weight()
+        tech_w = get_technical_weight()
+        active_system_prompt += f"""
+
+    TRADER PROFILE:
+    Trading Style: {style.replace('_', ' ').title()}
+    Fundamental Weight: {fund_w:.0%} | Technical Weight: {tech_w:.0%}
+    Prioritize {'fundamental analysis (business quality, valuation, earnings)' if fund_w > tech_w else 'technical analysis (indicators, chart patterns, momentum)'} for this trader.
+    """
+    except ImportError:
+        pass
+
+    # Inject SwarmBrief if available
     swarm_brief = state.get("swarm_brief")
     if swarm_brief and swarm_brief.get("swarm_size", 0) > 0:
         try:
@@ -496,6 +542,7 @@ workflow.add_node("NewsAggregatorAgent", news_aggregator_node)
 workflow.add_node("SupplyChainVisualizerAgent", supply_chain_visualizer_node)
 workflow.add_node("SECFilingsAgent", sec_filings_node)
 workflow.add_node("PeerComparisonAgent", peer_comparison_node)
+workflow.add_node("BusinessModelAgent", business_model_node)
 
 workflow.set_entry_point("Supervisor")
 
@@ -525,6 +572,7 @@ workflow.add_conditional_edges(
         "SupplyChainVisualizerAgent": "SupplyChainVisualizerAgent",
         "SECFilingsAgent": "SECFilingsAgent",
         "PeerComparisonAgent": "PeerComparisonAgent",
+        "BusinessModelAgent": "BusinessModelAgent",
         "FINISH": END
     }
 )
@@ -551,6 +599,7 @@ workflow.add_edge("NewsAggregatorAgent", "Supervisor")
 workflow.add_edge("SupplyChainVisualizerAgent", "Supervisor")
 workflow.add_edge("SECFilingsAgent", "Supervisor")
 workflow.add_edge("PeerComparisonAgent", "Supervisor")
+workflow.add_edge("BusinessModelAgent", "Supervisor")
 
 app = workflow.compile()
 
@@ -562,9 +611,19 @@ async def run_research_task(query: str):
     """
     print(f"[*] Starting Agentic Research: {query}")
     
+    # Inject swarm brief if available from the ContinuousMonitorAgent
+    swarm_brief = None
+    try:
+        from agent_continuous_monitor import get_monitor
+        monitor = get_monitor()
+        swarm_brief = getattr(monitor, "_latest_swarm_brief", None)
+    except Exception:
+        pass
+
     initial_state = {
         "messages": [HumanMessage(content=query)],
-        "next": "Supervisor"
+        "next": "Supervisor",
+        "swarm_brief": swarm_brief or {},
     }
     
     execution_log = []
@@ -586,7 +645,7 @@ async def run_research_task(query: str):
                             execution_log.append(f"🏁 **Final Report**: {content['final_answer']}")
                     except:
                         pass
-            elif key in ["ResearchAgent", "MacroAgent", "SentimentAgent", "RiskManagerAgent", "ExecutionAgent", "StrategyAgent", "ScoutAgent", "TechnicalAgent", "ValidationAgent", "NewsSentimentAgent", "PortfolioOptimizerAgent", "SectorRotationAgent", "VolatilityAgent", "CorrelationMatrixAgent", "SeasonalityAgent", "FundamentalAgent", "EarningsAgent", "ShortInterestAgent", "NewsAggregatorAgent", "SupplyChainVisualizerAgent", "SECFilingsAgent", "PeerComparisonAgent"]:
+            elif key in ["ResearchAgent", "MacroAgent", "SentimentAgent", "RiskManagerAgent", "ExecutionAgent", "StrategyAgent", "ScoutAgent", "TechnicalAgent", "ValidationAgent", "NewsSentimentAgent", "PortfolioOptimizerAgent", "SectorRotationAgent", "VolatilityAgent", "CorrelationMatrixAgent", "SeasonalityAgent", "FundamentalAgent", "EarningsAgent", "ShortInterestAgent", "NewsAggregatorAgent", "SupplyChainVisualizerAgent", "SECFilingsAgent", "PeerComparisonAgent", "BusinessModelAgent"]:
                 # Log agent activity
                 msg = value["messages"][0].content
                 # Ensure msg is a string before slicing

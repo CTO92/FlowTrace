@@ -50,9 +50,9 @@ async def get_db():
     Import the async engine/session factory from wherever they are configured.
     Defined inline to avoid circular imports with platform.main.
     """
-    from platform.database import async_session_factory
+    from platform.database import async_session
 
-    async with async_session_factory() as session:
+    async with async_session() as session:
         yield session
 
 
@@ -91,19 +91,22 @@ async def verify_agent_signature(
             detail=f"Node is {node.status}, not active",
         )
 
-    # ----- cryptographic verification -----
-    # In production this would use the node's public_key to verify the
-    # signature over body_str.  Stubbed here so the route layer compiles
-    # without a specific crypto library dependency.
-    import hashlib
-    import hmac
+    # ----- Ed25519 cryptographic verification -----
+    try:
+        from platform.auth import verify_signature
+        if not verify_signature(body_str, x_signature, node.public_key):
+            raise HTTPException(status_code=401, detail="Invalid signature")
+    except ImportError:
+        # Fallback: HMAC verification (less secure, for development only)
+        import hashlib
+        import hmac
 
-    expected = hmac.new(
-        node.public_key.encode(), body_str.encode(), hashlib.sha256
-    ).hexdigest()
+        expected = hmac.new(
+            node.public_key.encode(), body_str.encode(), hashlib.sha256
+        ).hexdigest()
 
-    if not hmac.compare_digest(expected, x_signature):
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        if not hmac.compare_digest(expected, x_signature):
+            raise HTTPException(status_code=401, detail="Invalid signature")
 
     return x_agent_id
 

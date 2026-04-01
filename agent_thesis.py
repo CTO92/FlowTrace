@@ -152,6 +152,33 @@ async def publish_high_confidence_signals() -> list:
         if not thesis:
             thesis = f"Signal detected for {ticker}: expected {expected_move:+.1f}% move"
 
+        # Enrich thesis with structured evidence if available
+        try:
+            from evidence_schema import evidence_to_debate_text
+            evidence_json = signal.get("evidence_summary")
+            if evidence_json and isinstance(evidence_json, str):
+                import json
+                evidence_list = json.loads(evidence_json)
+                evidence_text = " | ".join(
+                    evidence_to_debate_text(ev) for ev in evidence_list[:3]
+                )
+                thesis = f"{thesis}\n\nEvidence: {evidence_text}"
+        except Exception:
+            pass
+
+        # Add valuation context if available
+        val_json = signal.get("valuation_summary")
+        if val_json:
+            try:
+                import json
+                val = json.loads(val_json) if isinstance(val_json, str) else val_json
+                verdict = val.get("valuation_verdict", "")
+                upside = val.get("upside_to_mid", 0)
+                if verdict and upside:
+                    thesis += f"\n\nValuation: {verdict} ({upside:+.1f}% to fair value mid)"
+            except Exception:
+                pass
+
         result = await client.create_thread(
             ticker=ticker,
             direction=direction,

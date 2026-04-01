@@ -61,6 +61,9 @@ Your local analysis for this ticker shows:
 - Direction: {local_analysis.get('direction', 'UNKNOWN')}
 - Event Types: {', '.join(local_analysis.get('event_types', []))}
 - Reasoning: {local_analysis.get('reasoning_summary', 'N/A')}
+- Technical Data: {local_analysis.get('technical_snapshot', 'N/A')}
+- Fundamental Data: {local_analysis.get('fundamental_snapshot', 'N/A')}
+- Valuation: {local_analysis.get('valuation_summary', 'N/A')}
 
 Based on your local analysis, decide:
 1. SUPPORT - if your data agrees with the thesis direction and reasoning

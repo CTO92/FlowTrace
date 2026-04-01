@@ -684,3 +684,86 @@ def analyze_seasonality(ticker: str, lookback_years: int = 5):
         
     except Exception as e:
         return f"Error analyzing seasonality: {str(e)}"
+
+
+@tool("analyze_technicals")
+def analyze_technicals(
+    ticker: str,
+    indicators: str = "auto",
+    timeframe: str = "1d",
+    lookback: str = "6mo",
+) -> str:
+    """
+    Run technical analysis on a ticker using any combination of 38+ indicators.
+
+    indicators: comma-separated list (e.g., "RSI,MACD,SMA,OBV")
+                or "auto" to use trader profile defaults
+                or "all" for everything
+    timeframe: candle period -- "1m", "5m", "15m", "1h", "1d", "1wk", "1mo"
+    lookback: history to fetch -- "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"
+
+    Returns current indicator values, signals (overbought/oversold/crossover),
+    and a brief interpretation.
+    """
+    import json
+    from technical_indicators import compute_all, interpret_signals, get_indicators_for_timeframe
+
+    try:
+        ticker = ticker.upper()
+
+        # Resolve indicator set
+        if indicators == "auto":
+            try:
+                from trader_profile import get_preset_key, get_technical_indicator_set
+                indicator_list = get_technical_indicator_set()
+            except ImportError:
+                indicator_list = get_indicators_for_timeframe("swing_multi_week")
+        elif indicators == "all":
+            indicator_list = None  # compute_all with None = everything
+        else:
+            indicator_list = [i.strip().upper() for i in indicators.split(",")]
+
+        # Fetch OHLCV data
+        data = yf.download(ticker, period=lookback, interval=timeframe, progress=False)
+
+        if data.empty:
+            return f"No data available for {ticker} with timeframe={timeframe}, lookback={lookback}"
+
+        # Handle multi-level columns from yfinance
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+
+        # Compute indicators
+        results = compute_all(data, indicator_list)
+
+        # Interpret signals
+        signals = interpret_signals(results)
+
+        # Build output
+        output = f"Technical Analysis for {ticker} ({timeframe}, {lookback}):\n"
+        output += f"Current Price: ${results.get('current_price', '?')}\n"
+        output += f"Volume: {results.get('current_volume', '?'):,}\n\n"
+
+        # Key indicator values
+        output += "INDICATOR VALUES:\n"
+        for key, value in sorted(results.items()):
+            if key in ("current_price", "current_volume"):
+                continue
+            if value is not None:
+                if isinstance(value, float):
+                    output += f"  {key}: {value:.4f}\n"
+                else:
+                    output += f"  {key}: {value}\n"
+
+        # Signals
+        if signals:
+            output += f"\nSIGNALS DETECTED ({len(signals)}):\n"
+            for sig in signals:
+                output += f"  * {sig}\n"
+        else:
+            output += "\nNo notable signals detected.\n"
+
+        return output
+
+    except Exception as e:
+        return f"Error in technical analysis for {ticker}: {str(e)}"

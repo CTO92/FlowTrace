@@ -126,10 +126,13 @@ class ForumClient:
 
     async def register_node(self) -> Optional[dict]:
         """Register this node with the AgentForum. One-time operation."""
+        from version import VERSION
+
         data = {
             "node_id": self.node_id,
             "node_alias": self.node_alias,
             "public_key": get_public_key(),
+            "client_version": VERSION,
         }
 
         # Use node_id as a pseudo agent_id for registration
@@ -146,8 +149,10 @@ class ForumClient:
         if not is_forum_configured():
             return None
 
+        from version import VERSION
+
         url = get_api_url("nodes/heartbeat")
-        headers = {"X-Node-ID": self.node_id}
+        headers = {"X-Node-ID": self.node_id, "X-Client-Version": VERSION}
 
         session = await self._get_session()
         try:

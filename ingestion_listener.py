@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import sqlite3
 from datetime import datetime
@@ -65,30 +66,89 @@ def get_related_assets(ticker):
         print(f"[-] DB Error: {e}")
         return []
 
-def save_signals_to_db(source_ticker, analysis_result, agent_data):
+def _ensure_expanded_signals_schema(conn):
+    """Add new columns to the signals table if they don't exist yet."""
+    new_columns = [
+        ("risk_factors", "TEXT"),
+        ("sector", "TEXT"),
+        ("industry", "TEXT"),
+        ("news_url", "TEXT"),
+        ("news_source", "TEXT"),
+        ("related_assets", "TEXT"),
+        ("market_snapshot", "TEXT"),
+        ("technical_snapshot", "TEXT"),
+        ("fundamental_snapshot", "TEXT"),
+    ]
+    cursor = conn.cursor()
+    for col_name, col_type in new_columns:
+        # Note: DDL column names cannot be parameterized in SQLite.
+        # These values are hardcoded above (not from user input), so no injection risk.
+        try:
+            cursor.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+
+def save_signals_to_db(source_ticker, analysis_result, agent_data,
+                       news_url=None, news_source=None, related_assets=None):
     """
     Save the analysis results to the SQLite database.
+    Expanded to persist risk factors, sector, news URL, related assets,
+    and market context snapshot.
     """
-    if not os.path.exists(DB_PATH): return
+    if not os.path.exists(DB_PATH):
+        return
     try:
         conn = sqlite3.connect(DB_PATH)
+        _ensure_expanded_signals_schema(conn)
         cursor = conn.cursor()
-        
+
         summary = analysis_result.get('analysis_summary', '')
         timestamp = datetime.now()
-        
+
+        # Capture market context if available
+        market_snapshot_json = None
+        try:
+            from market_context import capture_market_context_sync
+            ctx = capture_market_context_sync(source_ticker)
+            if ctx:
+                market_snapshot_json = json.dumps(ctx, default=str)
+        except Exception:
+            pass
+
+        # Get sector/industry from yfinance if available
+        sector = None
+        industry = None
+        try:
+            import yfinance as yf
+            info = yf.Ticker(source_ticker).info
+            sector = info.get("sector")
+            industry = info.get("industry")
+        except Exception:
+            pass
+
+        related_assets_json = json.dumps(related_assets, default=str) if related_assets else None
+
         for target in analysis_result.get('targets', []):
+            # Extract risk_factors from LLM output (already in response, never saved before)
+            risk_factors = target.get('risk_factors', [])
+            risk_factors_json = json.dumps(risk_factors) if risk_factors else None
+
             cursor.execute('''
                 INSERT INTO signals (
-                    timestamp, source_ticker, target_ticker, event_type, 
-                    expected_move_pct, confidence, unified_score, 
-                    reasoning, summary, agent_data
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    timestamp, source_ticker, target_ticker, event_type,
+                    expected_move_pct, confidence, unified_score,
+                    reasoning, summary, agent_data,
+                    risk_factors, sector, industry, news_url, news_source,
+                    related_assets, market_snapshot
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 timestamp, source_ticker, target.get('ticker'), target.get('event_type'),
-                target.get('expected_move_pct'), target.get('confidence'), 
+                target.get('expected_move_pct'), target.get('confidence'),
                 target.get('unified_correlation_score'), target.get('reasoning'),
-                summary, str(agent_data)
+                summary, str(agent_data),
+                risk_factors_json, sector, industry, news_url, news_source,
+                related_assets_json, market_snapshot_json,
             ))
         conn.commit()
         conn.close()
@@ -182,8 +242,15 @@ async def process_news_item(item):
                         # This may fail in Docker/Headless environments
                         print(f"    [-] Notification failed (headless?): {e}")
 
-                # Save to DB for Dashboard
-                save_signals_to_db(ticker, analysis_result, agent_findings)
+                # Save to DB for Dashboard (expanded with news URL, related assets)
+                news_url = getattr(item, "article_url", None) or getattr(item, "url", None)
+                news_pub = getattr(item, "publisher", {})
+                pub_name = news_pub.get("name", "") if isinstance(news_pub, dict) else str(news_pub)
+                save_signals_to_db(
+                    ticker, analysis_result, agent_findings,
+                    news_url=news_url, news_source=pub_name,
+                    related_assets=related_assets,
+                )
 
 async def start_listener():
     """

@@ -146,21 +146,48 @@ def _rule_based_thesis(persona: dict, market_context: dict) -> Optional[dict]:
     ]
     ticker = random.choice(sector_tickers) if sector_tickers else random.choice(tickers)
 
-    # Determine direction based on archetype bias
+    # Get fundamental/technical weights from trader profile
+    try:
+        from trader_profile import get_fundamental_weight, get_technical_weight
+        fund_weight = get_fundamental_weight()
+        tech_weight = get_technical_weight()
+    except ImportError:
+        fund_weight = 0.4
+        tech_weight = 0.6
+
+    # Determine direction based on archetype bias + profile weighting
     bias = persona.get("archetype", "")
     ticker_data = market_context.get("ticker_data", {}).get(ticker, {})
     change_pct = ticker_data.get("change_pct", 0)
     sentiment = ticker_data.get("sentiment", 0)
+
+    # Use fundamental data for value-oriented archetypes when fund_weight is high
+    fundamentals = market_context.get("fundamentals", {}).get(ticker, {})
+    pe_ratio = fundamentals.get("trailing_pe", 0)
+    fcf_yield = fundamentals.get("fcf_yield", 0)
 
     if persona.get("contrarian_tendency", 0) > random.random():
         # Contrarian: go against recent movement
         direction = "BEARISH" if change_pct > 0 else "BULLISH"
     elif bias in ("momentum_trader", "trend_following"):
         direction = "BULLISH" if change_pct > 0.5 else "BEARISH" if change_pct < -0.5 else "NEUTRAL"
-    elif bias in ("value_investor", "conservative"):
-        direction = "BULLISH" if change_pct < -2 else "BEARISH" if change_pct > 5 else "NEUTRAL"
+    elif bias in ("value_investor", "conservative", "income_focused"):
+        # Value archetypes use fundamental data when available and fund_weight is high
+        if pe_ratio and pe_ratio > 0 and fund_weight >= 0.5:
+            direction = "BULLISH" if pe_ratio < 15 else "BEARISH" if pe_ratio > 35 else "NEUTRAL"
+        elif fcf_yield and fcf_yield > 0.05:
+            direction = "BULLISH"
+        else:
+            direction = "BULLISH" if change_pct < -2 else "BEARISH" if change_pct > 5 else "NEUTRAL"
     elif bias in ("sentiment_trader", "crowd_reading"):
         direction = "BULLISH" if sentiment > 0.3 else "BEARISH" if sentiment < -0.3 else "NEUTRAL"
+    elif bias in ("technical_purist", "chart_driven", "quantitative", "data_driven"):
+        # Technical archetypes weight technical data when tech_weight is high
+        rsi = market_context.get("technicals", {}).get(ticker, {}).get("RSI_14")
+        if rsi and tech_weight >= 0.5:
+            direction = "BULLISH" if rsi < 35 else "BEARISH" if rsi > 65 else "NEUTRAL"
+        else:
+            direction = "BULLISH" if change_pct > 0.5 else "BEARISH" if change_pct < -0.5 else "NEUTRAL"
     else:
         direction = random.choice(["BULLISH", "BEARISH", "NEUTRAL"])
 
