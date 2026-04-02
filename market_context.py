@@ -342,6 +342,7 @@ async def capture_market_context(ticker: str = None) -> dict:
 # ---------------------------------------------------------------------------
 
 _sync_executor = None
+_sync_executor_lock = __import__("threading").Lock()
 
 
 def capture_market_context_sync(ticker: str = None) -> dict:
@@ -351,7 +352,8 @@ def capture_market_context_sync(ticker: str = None) -> dict:
     Handles the async/sync boundary safely:
     - If no event loop is running: uses asyncio.run()
     - If an event loop IS running (e.g., inside ContinuousMonitorAgent):
-      runs the async function in a separate thread via a shared executor
+      creates the coroutine in the worker thread via a lambda to avoid
+      cross-thread coroutine issues, using a shared ThreadPoolExecutor.
 
     This is the function that agent_consensus.py and ingestion_listener.py
     should call instead of trying to manage the event loop themselves.
@@ -375,10 +377,15 @@ def capture_market_context_sync(ticker: str = None) -> dict:
         # No event loop running — safe to use asyncio.run()
         return asyncio.run(capture_market_context(ticker))
     else:
-        # Event loop is running — run in a shared thread pool (reuse executor)
-        if _sync_executor is None:
-            _sync_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-        future = _sync_executor.submit(asyncio.run, capture_market_context(ticker))
+        # Event loop is running — run in a shared thread pool.
+        # Use a lambda so the coroutine is created in the worker thread,
+        # not the calling thread (avoids cross-thread coroutine issues).
+        with _sync_executor_lock:
+            if _sync_executor is None:
+                _sync_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        future = _sync_executor.submit(
+            lambda: asyncio.run(capture_market_context(ticker))
+        )
         try:
             return future.result(timeout=30)
         except (concurrent.futures.TimeoutError, Exception) as e:
