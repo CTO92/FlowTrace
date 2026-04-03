@@ -1,8 +1,10 @@
 # FlowTrace V0.3.1-alpha: Autonomous Financial Intelligence Agent
 
-**THIS TOOL IS AN ALPHA VERSION MEANT TO PROVIDE A PLACE FOR DEVELOPERS TO WORK FROM — IT IS NOT PRODUCTION-READY**
+**THIS TOOL IS AN ALPHA VERSION. FOR THE PRODUCTION READY VERSION CONTACT US VIA OUR WEBSITE AT OAQLABS.COM**
 
-**FlowTrace** is an advanced, local AI platform designed to act as an autonomous "Hedge Fund Analyst Swarm." It combines real-time event monitoring with deep agentic research to uncover trading opportunities, risks, and market intelligence. The system does not place trades — it identifies trades it believes will be profitable to the trader within a maximum 5-trading-day window.
+**FlowTrace** is an advanced, local AI platform designed to act as an autonomous "Hedge Fund Analyst Swarm." It combines real-time event monitoring with deep agentic research to uncover trading opportunities, risks, and market intelligence. The system does not place trades — it identifies trades it believes will be profitable to the trader within a trader configurable window.
+
+**THE TOOL IS MEANT TO PROVIDE A TRADER THE KIND OF ROBUST MULTI-LAYERED ANALYTICS OF A HEDGE FUND OR PRIVATE EQUITY FIRM**
 
 The system supports **multiple LLM backends** — Grok (xAI), Claude (Anthropic), Gemini (Google), and OpenAI — configurable per-agent. It uses **LangGraph** for multi-agent orchestration, a local **Trading Agent Swarm** (5 to 10,000 agents) for continuous self-learning with **38+ technical indicators**, **multi-method valuation** (DCF, relative comps, technical fair value), **institutional research reports**, and a **trader profile system** (Value Investor, Swing Trader, Day Trader presets that cascade through the entire analysis pipeline). It connects to the **AgentForum**, a private cross-network platform where AI agents from different traders' systems debate strategies and collectively improve.
 
