@@ -80,6 +80,18 @@ class ContinuousMonitorAgent:
         # Trading Agent Swarm loop
         self._tasks.append(asyncio.create_task(self._swarm_loop()))
 
+        # TidalFlowBridge loop (optional — only if configured)
+        self._bridge_orchestrator = None
+        self._bridge_adapter = None
+        try:
+            from bridge.bridge_startup import start_bridge
+            self._bridge_orchestrator, self._bridge_adapter = await start_bridge()
+            if self._bridge_orchestrator:
+                self._tasks.append(asyncio.create_task(self._bridge_loop()))
+                logger.info(f"  Bridge:     connected as {self._bridge_orchestrator.identity.node_alias}")
+        except (ImportError, Exception) as e:
+            logger.info(f"  Bridge:     disabled ({e})")
+
         try:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
@@ -90,6 +102,12 @@ class ContinuousMonitorAgent:
         self.running = False
         for task in self._tasks:
             task.cancel()
+        if self._bridge_orchestrator:
+            try:
+                from bridge.bridge_startup import stop_bridge
+                await stop_bridge()
+            except Exception:
+                pass
         logger.info("ContinuousMonitorAgent stopped.")
 
     # --- Core Loops ---
@@ -514,6 +532,39 @@ class ContinuousMonitorAgent:
                 logger.error(f"[Health] Health check error: {e}")
                 await asyncio.sleep(300)
 
+    # --- Bridge Loop ---
+
+    async def _bridge_loop(self):
+        """Sync with TidalShift via TidalFlowBridge — heartbeat + signal publishing."""
+        while self.running:
+            try:
+                if not self._bridge_adapter or not self._bridge_orchestrator:
+                    await asyncio.sleep(30)
+                    continue
+
+                # Post heartbeat
+                transport = self._bridge_orchestrator.transport
+                if transport:
+                    await transport.post_heartbeat("flowtrace")
+
+                # Queue high-confidence consensus signals for publishing
+                try:
+                    from agent_consensus import get_recent_consensus_signals
+                    recent = get_recent_consensus_signals(limit=5)
+                    for sig in recent:
+                        score = sig.get("consensus_score", 0)
+                        if score >= 0.70:
+                            self._bridge_adapter.queue_trade_signal(sig)
+                except Exception as e:
+                    logger.debug(f"[Bridge] Signal collection error: {e}")
+
+                await asyncio.sleep(30)
+
+            except Exception as e:
+                logger.error(f"[Bridge] Bridge loop error: {e}")
+                self._error_counts["bridge"] = self._error_counts.get("bridge", 0) + 1
+                await asyncio.sleep(60)
+
     # --- Helpers ---
 
     async def _notify_trader(self, signal: dict):
@@ -577,6 +628,7 @@ class ContinuousMonitorAgent:
             "swarm_brief": self._latest_swarm_brief,
             "error_counts": dict(self._error_counts),
             "performance": config.get("performance_history", {}),
+            "bridge": self._bridge_orchestrator.get_status() if self._bridge_orchestrator else {"enabled": False},
         }
 
 

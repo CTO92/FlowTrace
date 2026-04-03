@@ -139,6 +139,7 @@ def render_recommendation(consensus_signal: dict, portfolio: dict = None) -> dic
         "catalysts": catalysts,
         "trade_plan": trade_plan,
         "freshness": freshness,
+        "cascade_context": _build_cascade_context(ticker, consensus_signal.get("sector", "")),
     }
 
 
@@ -578,3 +579,16 @@ def _load_forum_threads(ticker: str) -> list:
         return [dict(r) for r in rows]
     except Exception:
         return []
+
+
+def _build_cascade_context(ticker: str, sector: str = "") -> dict:
+    """Build TidalShift cascade context for a signal (if bridge is available)."""
+    try:
+        from bridge.bridge_startup import get_bridge_adapter
+        adapter = get_bridge_adapter()
+        if adapter:
+            from bridge.cascade_evidence import build_cascade_context
+            return build_cascade_context(adapter, ticker, sector)
+    except (ImportError, Exception):
+        pass
+    return {"available": False, "source": "TidalShift", "relevant_pathways": []}

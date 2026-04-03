@@ -260,7 +260,19 @@ def calculate_consensus(
     except ImportError:
         pass
 
-    # 9. Calculate final adjusted confidence
+    # 9. Apply TidalFlowBridge pathway multiplier (optional)
+    bridge_multiplier = 1.0
+    try:
+        from bridge.bridge_startup import get_bridge_adapter
+        bridge_adapter = get_bridge_adapter()
+        if bridge_adapter:
+            bridge_multiplier = bridge_adapter.calculate_bridge_multiplier(
+                ticker, direction, sector=sector_name if 'sector_name' in dir() else ""
+            )
+    except (ImportError, Exception):
+        pass
+
+    # 10. Calculate final adjusted confidence
     raw_normalized = raw_confidence / 100.0  # normalize to 0-1
 
     adjusted = (
@@ -273,6 +285,7 @@ def calculate_consensus(
         * swarm_multiplier
         * valuation_multiplier
         * catalyst_multiplier
+        * bridge_multiplier
     )
 
     # Clamp to [0, 1]
@@ -306,6 +319,7 @@ def calculate_consensus(
             "swarm_multiplier": round(swarm_multiplier, 3),
             "valuation_multiplier": round(valuation_multiplier, 3),
             "catalyst_multiplier": round(catalyst_multiplier, 3),
+            "bridge_multiplier": round(bridge_multiplier, 3),
         },
         "node_id": get_node_id(),
         "agent_id": _get_agent_id(),

@@ -306,11 +306,11 @@ else:
 
     # Tabs
     # Reordered for Phase 4 Interface
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
         "📡 Live Feed", "💬 Analyst Chat", "📊 Analysis & History", "🤖 Agent Logs",
         "💼 Portfolio", "🖼️ Gallery", "⚙️ Settings", "📈 Performance",
         "⚠️ Risk Analysis", "👀 Watchlist", "🌍 Macro Dashboard", "🧠 Learning & AI",
-        "🐝 Trading Swarm",
+        "🐝 Trading Swarm", "🌊 Cross-Intelligence",
     ])
 
     with tab1:
@@ -1689,6 +1689,171 @@ else:
         ac1.metric("Max Agreement Ratio", f"{anti_conv.get('max_agreement_ratio', 0.85):.0%}")
         ac2.metric("Forced Contrarian %", f"{anti_conv.get('forced_contrarian_pct', 0.10):.0%}")
         ac3.metric("Mutation Rate", f"{anti_conv.get('opinion_mutation_rate', 0.05):.0%}")
+
+    # ── Tab 14: Cross-Intelligence (TidalFlowBridge) ──
+    with tab14:
+        st.subheader("Cross-Intelligence — TidalShift Connection")
+
+        try:
+            from bridge.bridge_startup import get_bridge_orchestrator, get_bridge_adapter, is_bridge_enabled
+            from bridge.cascade_evidence import format_pathways_for_streamlit, format_warnings_for_streamlit
+
+            bridge_orch = get_bridge_orchestrator()
+            bridge_adapt = get_bridge_adapter()
+
+            if not is_bridge_enabled():
+                st.info(
+                    "TidalFlowBridge is not active. To enable:\n"
+                    "1. Set `BRIDGE_PASSPHRASE` environment variable\n"
+                    "2. Run `tidalflowbridge-setup` in the FlowTrace directory\n"
+                    "3. Pair with TidalShift: `tidalflowbridge-pair --peer-url http://<host>:8200`\n"
+                    "4. Restart FlowTrace"
+                )
+            else:
+                bridge_status = bridge_orch.get_status()
+
+                # --- Status Metrics ---
+                st.markdown("### Bridge Status")
+                bs1, bs2, bs3, bs4, bs5, bs6 = st.columns(6)
+                bs1.metric("Status", "ONLINE" if bridge_status.get("running") else "OFFLINE")
+                identity = bridge_status.get("identity", {})
+                bs2.metric("Node", identity.get("node_alias", "N/A"))
+                conns = bridge_status.get("connections", {})
+                bs3.metric("Peers", f"{conns.get('online_peers', 0)}/{conns.get('total_peers', 0)}")
+                pub = bridge_status.get("publisher", {})
+                bs4.metric("Published", pub.get("total_published", 0))
+                sub = bridge_status.get("subscriber", {})
+                bs5.metric("Received", sub.get("total_received", 0))
+                budget = bridge_status.get("budget", {})
+                bs6.metric("Budget Left", f"${budget.get('remaining_usd', 0):.2f}")
+
+                st.markdown("---")
+
+                # --- Cascade Pathways from TidalShift ---
+                st.markdown("### Cascading Pathways from TidalShift")
+                cascade_cache = bridge_adapt.get_cascade_cache() if bridge_adapt else []
+                if cascade_cache:
+                    pathway_data = format_pathways_for_streamlit(cascade_cache)
+                    st.dataframe(pd.DataFrame(pathway_data), use_container_width=True)
+
+                    # Detailed view in expander
+                    for pw in reversed(cascade_cache[-5:]):
+                        with st.expander(f"{pw.get('label', 'Unknown')[:80]} — {pw.get('plausibility', 0):.0%}"):
+                            pw_c1, pw_c2, pw_c3 = st.columns(3)
+                            pw_c1.metric("Plausibility", f"{pw.get('plausibility', 0):.0%}")
+                            pw_c2.metric("Domains", ", ".join(pw.get("domains_involved", [])))
+                            pw_c3.metric("Horizon", pw.get("time_horizon", "weeks"))
+                            st.markdown(f"**Sectors:** {', '.join(pw.get('affected_sectors', []))}")
+                            st.markdown(f"**Entities:** {', '.join(pw.get('affected_entities', [])[:10])}")
+                            if pw.get("summary"):
+                                st.markdown(f"**Summary:** {pw['summary'][:500]}")
+                            if pw.get("feedback_loops"):
+                                st.markdown(f"**Feedback Loops:** {', '.join(str(fl) for fl in pw['feedback_loops'][:3])}")
+                else:
+                    st.caption("No pathways received from TidalShift yet.")
+
+                st.markdown("---")
+
+                # --- Cascade Warnings ---
+                st.markdown("### Active Cascade Warnings")
+                warnings = bridge_adapt.get_active_warnings() if bridge_adapt else []
+                if warnings:
+                    warning_data = format_warnings_for_streamlit(warnings)
+                    st.dataframe(pd.DataFrame(warning_data), use_container_width=True)
+                else:
+                    st.caption("No active cascade warnings.")
+
+                st.markdown("---")
+
+                # --- Recent Signals ---
+                st.markdown("### Recent Bridge Signals")
+                recent = bridge_adapt.get_recent_received(limit=15) if bridge_adapt else []
+                if recent:
+                    for sig in recent:
+                        sig_type = sig.get("signal_type", "unknown")
+                        conf = sig.get("confidence", 0)
+                        color = "#3b82f6" if conf > 0.7 else ("#f59e0b" if conf > 0.4 else "#64748b")
+                        st.markdown(
+                            f'<div style="background-color:#262730;padding:10px;border-radius:8px;'
+                            f'margin-bottom:8px;border-left:4px solid {color};">'
+                            f'<strong style="color:{color};">{sig_type.replace("_", " ").upper()}</strong> '
+                            f'<span style="color:#94a3b8;">— {sig.get("summary", "")}</span><br/>'
+                            f'<small style="color:#64748b;">'
+                            f'Confidence: {conf:.0%} | From: {sig.get("source", "?")} | {sig.get("timestamp", "")[:19]}'
+                            f'</small></div>',
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("No signals received yet.")
+
+                st.markdown("---")
+
+                # --- Ask TidalShift ---
+                st.markdown("### Ask TidalShift")
+                with st.form("bridge_query_form"):
+                    query_text = st.text_area(
+                        "Question",
+                        placeholder="e.g., What policy risks affect NVDA in the next 30 days?",
+                        height=80,
+                    )
+                    bq1, bq2 = st.columns(2)
+                    query_type = bq1.selectbox(
+                        "Query Type",
+                        options=["custom", "explain_move", "cascade_forecast", "entity_exposure", "pathway_status"],
+                    )
+                    query_depth = bq2.selectbox(
+                        "Depth",
+                        options=["cached", "lightweight", "standard", "full"],
+                        index=0,
+                    )
+                    submitted = st.form_submit_button("Send Query")
+
+                if submitted and query_text and bridge_orch:
+                    with st.spinner("Querying TidalShift..."):
+                        import asyncio
+                        try:
+                            resp = asyncio.run(bridge_orch.query_client.ask_peer(
+                                question=query_text,
+                                target_node_type="tidalshift",
+                                query_type=query_type,
+                                depth=query_depth,
+                                user_initiated=True,
+                            ))
+                            if resp.status == "success":
+                                st.success(f"Response (confidence: {resp.confidence:.0%}, cost: ${resp.cost_usd:.3f})")
+                                st.json(resp.response)
+                            elif resp.status == "partial":
+                                st.warning(f"Partial response (confidence: {resp.confidence:.0%})")
+                                st.json(resp.response)
+                            else:
+                                st.error(f"Query {resp.status}: {resp.error_message or 'Unknown error'}")
+                        except Exception as e:
+                            st.error(f"Query failed: {e}")
+
+                st.markdown("---")
+
+                # --- Peer Details ---
+                st.markdown("### Peer Connections")
+                peers = conns.get("peers", [])
+                if peers:
+                    for peer in peers:
+                        status_icon = "+" if peer.get("is_online") else "-"
+                        local_tag = " (local)" if peer.get("is_local") else ""
+                        latency = f" — {peer.get('latency_ms', 0):.0f}ms" if peer.get("latency_ms") else ""
+                        st.markdown(
+                            f"**[{status_icon}] {peer.get('node_alias', '?')}** "
+                            f"({peer.get('node_type', '?')}){local_tag}{latency}"
+                        )
+                else:
+                    st.caption("No peers connected.")
+
+        except ImportError:
+            st.info(
+                "TidalFlowBridge package is not installed. To enable cross-intelligence:\n\n"
+                "`pip install -e ../TidalFlowBridge`"
+            )
+        except Exception as e:
+            st.error(f"Bridge tab error: {e}")
 
 # Auto-refresh logic
 time.sleep(refresh_rate)
